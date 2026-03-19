@@ -193,11 +193,11 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-
-
-
+# Artefactos derivados locales del pipeline.
+# No son fuente de verdad del repositorio y deben regenerarse desde config y codigo.
 data/
 logs/
 lightning_logs/
 
+# Checkpoints temporales o locales no canonicos.
 best_tft_checkpoint.pth

@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class FeatureEngineer:
@@ -33,7 +32,7 @@ class FeatureEngineer:
     @staticmethod
     def calculate_vwap(group: pd.DataFrame) -> pd.Series:
         """Oblicza Volume Weighted Average Price (VWAP)."""
-        typical_price = (group['Close'] + group['Close'] + group['Close']) / 3
+        typical_price = (group['High'] + group['Low'] + group['Close']) / 3
         vwap = (typical_price * group['Volume']).cumsum() / group['Volume'].cumsum()
         return vwap
 
@@ -73,12 +72,7 @@ class FeatureEngineer:
             group['Month'] = group['Date'].dt.month.astype(str)
             group['Day_of_Week'] = group['Date'].dt.dayofweek.astype(str)
 
-            # Wypełnianie brakujących wartości dla Relative_Returns
-            nan_count = group['Relative_Returns'].isna().sum()
-            if nan_count > 0:
-                group['Relative_Returns'] = group['Relative_Returns'].fillna(0)
-            
-            # Wypełnianie brakujących wartości dla innych cech
+            # Nie wolno wypełniać danych przyszłością dla cech czasowych.
             features_to_fill = [
                 'MA10', 'MA50', 'BB_upper', 'Close_to_BB_upper',
                 'RSI', 'MACD', 'ROC', 'VWAP',
@@ -86,7 +80,7 @@ class FeatureEngineer:
             ]
             for feature in features_to_fill:
                 if feature in group.columns:
-                    group[feature] = group[feature].ffill().bfill()
+                    group[feature] = group[feature].ffill()
             
             return group
 

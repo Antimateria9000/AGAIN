@@ -1,26 +1,18 @@
-import pytorch_forecasting
 from pytorch_forecasting import TemporalFusionTransformer
-from pytorch_forecasting.metrics import MAE, QuantileLoss
 from pytorch_lightning import LightningModule
 import torch
 import logging
-from typing import Dict, Any, Optional, Union, List, Tuple
-import pickle
-from pathlib import Path
-import numpy as np
+from typing import Dict, Any, Optional, List, Tuple
 import sys
 import os
 import time
-import matplotlib.pyplot as plt
 
 # Dodaj katalog główny do ścieżek systemowych
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from scripts.config_manager import ConfigManager 
+from scripts.runtime_config import ConfigManager
 from scripts.utils.model_config import ModelConfig, HyperparamFactory
-from scripts.utils.validation_utils import log_validation_details, create_validation_plot, convert_to_prices
+from scripts.utils.validation_utils import log_validation_details, create_validation_plot
 
-# Konfiguracja logowania
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Ustaw precyzję dla Tensor Cores na GPU
@@ -152,50 +144,29 @@ class CustomTemporalFusionTransformer(LightningModule):
         x = move_to_device(x, self.device)
         y_target = move_to_device(y[0], self.device)
         
-        if stage == 'train' and not y_target.requires_grad:
-            y_target.requires_grad_(True)
-        
-        if self.debug:
-            if torch.isnan(y_target).any() or torch.isinf(y_target).any():
-                logger.warning(f"NaN/Inf w y_target w batch {batch_idx}")
-                y_target = torch.nan_to_num(y_target, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        try:
-            with torch.amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
-                y_hat = self(x)
+        if torch.isnan(y_target).any() or torch.isinf(y_target).any():
+            raise ValueError(f"y_target contiene NaN o Inf en batch {batch_idx}")
 
-                if self.debug:
-                    if torch.isnan(y_hat).any() or torch.isinf(y_hat).any():
-                        logger.warning(f"NaN/Inf w y_hat w batch {batch_idx}")
-                        y_hat = torch.nan_to_num(y_hat, nan=0.0, posinf=0.0, neginf=0.0)
-                
-                # Obliczanie straty
-                loss = self.model.loss(y_hat, y_target)
-                
-                # Obliczanie dodatkowych metryk tylko dla walidacji
-                if stage == 'val':
-                    # Wybierz medianę dla metryk (indeks 1 dla kwantyli [0.1, 0.5, 0.9])
-                    y_hat_median = y_hat[:, :, 1] if y_hat.dim() == 3 else y_hat
-                    
-                    # MAPE
-                    mape = torch.mean(torch.abs((y_target - y_hat_median) / (y_target + 1e-10))) * 100
-                    self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
-                    
-                    # Directional Accuracy
-                    direction_pred = torch.sign(y_hat_median)
-                    direction_true = torch.sign(y_target)
-                    directional_accuracy = (direction_pred == direction_true).float().mean() * 100
-                    self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
-                
-                if not torch.isfinite(loss):
-                    logger.warning(f"Loss nie jest skończony w batch {batch_idx}: {loss}")
-                    loss = torch.tensor(1e-6, device=self.device, requires_grad=True)
-                
-        except Exception as e:
-            logger.error(f"Błąd podczas forward pass w batch {batch_idx}: {e}")
-            loss = torch.tensor(1e-6, device=self.device, requires_grad=True)
-            y_hat = torch.zeros_like(y_target, requires_grad=True)
-        
+        with torch.amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
+            y_hat = self(x)
+
+            if torch.isnan(y_hat).any() or torch.isinf(y_hat).any():
+                raise ValueError(f"y_hat contiene NaN o Inf en batch {batch_idx}")
+
+            loss = self.model.loss(y_hat, y_target)
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"Loss no finita en batch {batch_idx}: {loss}")
+
+            if stage == 'val':
+                y_hat_median = y_hat[:, :, 1] if y_hat.dim() == 3 else y_hat
+                mape = torch.mean(torch.abs((y_target - y_hat_median) / (y_target + 1e-10))) * 100
+                self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
+
+                direction_pred = torch.sign(y_hat_median)
+                direction_true = torch.sign(y_target)
+                directional_accuracy = (direction_pred == direction_true).float().mean() * 100
+                self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
+
         batch_size = x['encoder_cont'].size(0)
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         

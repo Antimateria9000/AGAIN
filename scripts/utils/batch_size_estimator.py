@@ -3,7 +3,6 @@ import logging
 import math
 from pytorch_forecasting import TimeSeriesDataSet
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def estimate_batch_size(model, dataset: TimeSeriesDataSet, config: dict) -> int:

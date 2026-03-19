@@ -1,135 +1,134 @@
-# 📈 Model Predykcyjny Kursu Akcji
+# Predictor bursatil con TFT
 
-Ten projekt implementuje model predykcyjny kursu akcji oparty na danych giełdowych, wykorzystujący Temporal Fusion Transformer (TFT). Zawiera również aplikację webową zbudowaną w Streamlit, która umożliwia wizualizację prognoz, porównanie predykcji z danymi historycznymi oraz ocenę skuteczności modelu poprzez benchmark.
+Este repositorio implementa un pipeline experimental de forecasting bursatil con Temporal Fusion Transformer (TFT), mas una aplicacion Streamlit para inferencia, comparacion historica y benchmark visual.
 
----
+No es un sistema listo para inversion real. El objetivo actual del repositorio es investigacion aplicada y validacion tecnica del pipeline.
 
-## 🚀 Funkcjonalności
+## Alcance actual
 
-- **Trening modelu**: Skrypt `start_training.py` pozwala na pobranie danych giełdowych, trening modelu i zapis wyników.
-- **Predykcje przyszłości**: Aplikacja Streamlit generuje prognozy cen akcji dla wybranych tickerów (np. `CDR.WA`).
-- **Porównanie z historią**: Możliwość porównania predykcji z rzeczywistymi danymi historycznymi.
-- **Benchmark**: Ocena skuteczności modelu na zestawie tickerów z metrykami takimi jak Dokładność i Dokładność kierunkowa.
+- Descarga de datos con `yfinance`
+- Ingenieria de features tecnicas
+- Entrenamiento TFT con cuantiles
+- Inferencia desde la app Streamlit
+- Comparacion historica sobre barras reales disponibles
+- Benchmark visual con metricas `MAPE`, `MAE`, `RMSE` y `DirAcc`
 
----
+## Ejecucion
 
-## 🖥️ Uruchomienie projektu
+### Entrenamiento
 
-### Trening modelu
-Aby rozpocząć trening modelu, uruchom:
 ```bash
 python start_training.py
 ```
-Skrypt pobiera dane giełdowe (za pomocą `yfinance`), trenuje model TFT i zapisuje wyniki w folderze `models`.
 
-### Aplikacja webowa
-Aby uruchomić aplikację Streamlit:
+### Aplicacion Streamlit
+
 ```bash
 streamlit run app/app.py
 ```
-Aplikacja umożliwia:
-- Generowanie predykcji dla wybranego tickera.
-- Porównanie predykcji z danymi historycznymi.
-- Wyświetlenie wyników benchmarku dla zestawu tickerów.
 
----
+## Configuracion
 
-## 📊 Przykłady wyników
+Archivo principal:
 
-### Predykcje dla `CDR.WA`
-Poniżej przedstawiono przykład predykcji cen zamknięcia dla tickera `CDR.WA` na kolejne dni, z kwantylami 10% i 90%.
+- `config/config.yaml`
 
-![Predykcje dla CDR.WA](docs/images/predykcje.png)
+Archivos de tickers:
 
-### Porównanie predykcji z historią dla `CDR.WA`
-Wykres porównuje przewidywane ceny zamknięcia z rzeczywistymi danymi historycznymi dla `CDR.WA`.
+- `config/tickers_with_names.yaml`
+- `config/benchmark_tickers.yaml`
 
-![Porównanie predykcji z historią dla CDR.WA](docs/images/porownanie_predykcji_z_historia.png)
+Rutas de artefactos relevantes definidas en config:
 
-### Benchmark
-#### Wykres benchmarku
-Wykres porównuje predykcje z danymi historycznymi dla tickerów zdefiniowanych w pliku `config/benchmark_tickers.yaml` (unikalne tickery, różne od tych użytych w treningu).
+- `data/raw_data_path`
+- `data/processed_data_path`
+- `data/train_processed_df_path`
+- `data/val_processed_df_path`
+- `paths/models_dir`
+- `paths/normalizers_dir`
+- `paths/logs_dir`
 
-![Wykres benchmarku](docs/images/benchmark_wykres.png)
+## Dependencias
 
-#### Tabela metryk benchmarku
-Tabela przedstawia metryki skuteczności modelu dla tickerów w benchmarku, takie jak Accuracy, MAPE, MAE i Directional Accuracy.
+Instalacion basica:
 
-![Tabela metryk benchmarku](docs/images/benchmark.png)
-
----
-
-## ⚠️ Ograniczenia danych
-
-Biblioteka `yfinance` używana do pobierania danych giełdowych nie dostarcza **historycznych** wartości wskaźników fundamentalnych, takich jak:
-- **PE ratio** (Price to Earnings)
-- **PB ratio** (Price to Book)
-
-Dostępne są jedynie **aktualne wartości** tych wskaźników poprzez metodę `Ticker().info`.
-
----
-
-## 📁 Struktura projektu
-
-```
-├── app/
-│   ├── app.py                 # Streamlit app — UI do wyboru tickerów, wyświetlania predykcji i benchmarku
-│   ├── benchmark_utils.py     # Funkcje do wykonywania benchmarku i obliczania metryk
-│   ├── config_loader.py       # Ładowanie konfiguracji aplikacji i list tickerów
-│   └── plot_utils.py          # Funkcje generujące wykresy i wizualizacje
-├── scripts/
-│   ├── config_manager.py      # Zarządzanie konfiguracją, zapisywanie/odczyt normalizerów i modeli
-│   ├── data_fetcher.py        # Pobieranie danych giełdowych (yfinance), zapis surowych plików
-│   ├── model.py               # Definicja architektury modelu (TFT) i utilities do tworzenia modelu
-│   ├── prediction_engine.py   # Logika generowania predykcji przy użyciu wytrenowanego modelu
-│   ├── preprocessor.py        # DataPreprocessor — przygotowanie cech, normalizacja, budowa TimeSeriesDataSet
-│   ├── train.py               # Skrypt treningowy — uczenie modelu, checkpointing, logowanie metryk
-│   ├── utils/
-│   │   ├── feature_engineer.py        # Funkcje tworzące cechy techniczne i czasowe (MA, RSI, itd)
-│   │   ├── model_config.py            # Helpery do walidacji i budowy konfiguracji modelu
-│   │   ├── transfer_weights.py        # Narzędzia do przenoszenia wag między checkpointami
-│   │   └── validation_utils.py        # Metryki i funkcje walidacyjne 
-│   └── debug/
-│       ├── debug_dataset.py    # Skrypty pomocnicze do debugowania TimeSeriesDataSet i danych
-│       ├── feature_importance.py # Eksperymenty / skrypty analizy ważności cech
-│       └── transfer_weights.py  # Narzędzia do przenoszenia wag między modelami
-├── config/
-│   ├── config.yaml            # Główne ustawienia projektu (ścieżki, parametry modelu)
-│   ├── tickers.yaml           # Lista tickerów
-│   └── benchmark_tickers.yaml # Lista tickerów używanych w benchmarku (inne niż w treningu)
-├── data/                   # Dane surowe i przetworzone
-├── models/                 # Zapisane modele oraz normalizery
-├── docs/                   # Materiały pomocnicze (obrazy, wykresy do README)
-├── start_training.py       # Wygodny wrapper uruchamiający pełny pipeline treningowy
-├── README.md               # Dokumentacja projektu
-└── requirements.txt        # Lista zależności
-```
-
----
-
-## 🛠️ Wymagania
-
-Projekt wymaga Pythona 3.9+ oraz zależności wymienionych w pliku `requirements.txt`. Aby zainstalować zależności, wykonaj:
 ```bash
 pip install -r requirements.txt
 ```
 
-> **Uwaga**: Pełna lista bibliotek (np. `streamlit`, `yfinance`, `pytorch`, `pandas`) znajduje się w `requirements.txt`. Upewnij się, że środowisko wirtualne jest aktywne przed instalacją.
+Importante:
 
----
+- `requirements.txt` incluye las dependencias de runtime detectadas en el codigo.
+- A dia de hoy no sustituye a un lockfile por plataforma.
+- Para reproducibilidad estricta hace falta resolver y congelar el entorno final de Python, Torch, CUDA y PyTorch Forecasting.
 
-## 📚 Modele
+## Estructura real del repositorio
 
-Porównanie modeli:
+```text
+app/
+  app.py
+  benchmark_utils.py
+  config_loader.py
+  plot_utils.py
+config/
+  benchmark_tickers.yaml
+  config.yaml
+  tickers_with_names.yaml
+scripts/
+  config_manager.py
+  runtime_config.py
+  data_fetcher.py
+  model.py
+  prediction_engine.py
+  preprocessor.py
+  train.py
+  debug/
+  utils/
+    batch_size_estimator.py
+    config_validation.py
+    data_schema.py
+    feature_engineer.py
+    model_config.py
+    prediction_utils.py
+    transfer_weights.py
+    validation_utils.py
+start_training.py
+requirements.txt
+README.md
+```
 
-| Model       | Opis                              | Dokładność | Długość predykcji | Szybkość treningu          | Total Params |
-|-------------|-----------------------------------|------------|-------------------|----------------------------|--------------|
-| gen3        | Pierwszy użyteczny model          | 88.9%      | 90 dni            | 60 min/epoka, 30 próbek/s  | -            |
-| gen3mini    | Lżejsza wersja do szybkich testów | 87.8%      | 90 dni            | 20 min/epoka, 90 próbek/s  | 2.7M         |
-| gen4mini    | Zmniejszona liczba cech           | 88.0%      | 90 dni            | 20 min/epoka, 90 próbek/s  | 2.7M         |
-| gen6        | Wersja z małą liczbą parametrów   |  -         | 60 dni            | 10 min/epoka, 192 próbek/s | 1.7M         |
-| gen6_1      | Wersja gdzie model nie oczekuje parametrów z przyszłości, zbliżone do rzeczywistych warunków. Wymaga długiego treningu   |  92%         | 60 dni            | 6 min/epoka, 300 próbek/s | 1.4M         |
+## Tests y validacion automatica
 
+El repositorio incluye pruebas estaticas y de coherencia en `tests/` y una CI minima en `.github/workflows/ci.yml`.
 
+Estas comprobaciones cubren:
 
-> **Uwaga**: Wartość `Szybkość treningu` jest względna i będzie się różnić w zależności od posiadanego sprzętu (CPU/GPU, ilości pamięci, sterowników i konfiguracji). Rzeczywiste czasy mogą się od niej różnić.
+- coherencia basica de `config.yaml`
+- sincronizacion minima del `README`
+- presencia de dependencias criticas en `requirements.txt`
+- compilacion de los modulos Python mas importantes
+
+## Politica de artefactos
+
+Los siguientes ficheros y carpetas se consideran artefactos derivados y no fuente de verdad del repositorio:
+
+- `data/`
+- `logs/`
+- `lightning_logs/`
+- checkpoints locales en `models/`
+
+Estos artefactos deben regenerarse desde el codigo, la configuracion y los datos de entrada. La fuente de verdad del pipeline esta en `config/`, `scripts/`, `app/`, `start_training.py` y `requirements.txt`.
+
+## Reproducibilidad de resultados
+
+El README no debe interpretarse como evidencia de rendimiento financiero reproducido extremo a extremo. Si en el futuro se publican metricas concretas, deben acompanarse de `seed`, rango temporal, conjunto de tickers, `config`, commit y comando exacto de reproduccion.
+
+## Limitaciones conocidas
+
+- El benchmark actual sigue siendo estadistico, no un backtest economico completo con costes, slippage y reglas operativas finales.
+- La reproducibilidad total del entorno requiere lockfile y validacion en una matriz concreta de Python y CUDA.
+- El codigo historico del repositorio todavia contiene modulos y comentarios heredados que conviene seguir limpiando.
+
+## Aviso
+
+Este proyecto no constituye asesoramiento financiero.

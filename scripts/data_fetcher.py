@@ -5,12 +5,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-from .config_manager import ConfigManager
+from .runtime_config import ConfigManager
 import yaml
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class DataFetcher:

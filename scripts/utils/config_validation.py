@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict
+
+
+def _require_path(config: Dict[str, Any], dotted_key: str):
+    value: Any = config
+    for key in dotted_key.split("."):
+        if not isinstance(value, dict) or key not in value:
+            raise ValueError(f"Falta la clave obligatoria '{dotted_key}' en config.yaml")
+        value = value[key]
+    return value
+
+
+def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
+    required_keys = [
+        "model_name",
+        "model.max_prediction_length",
+        "model.min_encoder_length",
+        "model.max_encoder_length",
+        "model.hidden_size",
+        "model.lstm_layers",
+        "model.attention_head_size",
+        "model.dropout",
+        "model.learning_rate",
+        "model.embedding_sizes",
+        "model.sectors",
+        "model.tuning",
+        "training.seed",
+        "training.max_epochs",
+        "training.optuna_trials",
+        "training.num_workers",
+        "training.prefetch_factor",
+        "training.early_stopping_patience",
+        "training.reduce_lr_patience",
+        "training.reduce_lr_factor",
+        "training.weight_decay",
+        "prediction.years",
+        "prediction.batch_size",
+        "validation.debug",
+        "validation.enable_detailed_validation",
+        "validation.max_validation_batches_to_log",
+        "validation.save_plots",
+        "validation.max_plots_per_epoch",
+        "data.raw_data_path",
+        "data.processed_data_path",
+        "data.train_processed_df_path",
+        "data.val_processed_df_path",
+        "data.tickers_file",
+        "data.benchmark_tickers_file",
+        "paths.data_dir",
+        "paths.models_dir",
+        "paths.normalizers_dir",
+        "paths.config_dir",
+        "paths.logs_dir",
+    ]
+    for key in required_keys:
+        _require_path(config, key)
+
+    if "tuning" in config.get("training", {}):
+        raise ValueError("La configuracion de Optuna debe estar en 'model.tuning' y no en 'training.tuning'")
+
+    for dotted_key in ("data.train_processed_df_path", "data.val_processed_df_path"):
+        parquet_path = Path(_require_path(config, dotted_key))
+        if parquet_path.suffix.lower() != ".parquet":
+            raise ValueError(f"La ruta '{dotted_key}' debe terminar en '.parquet'")
+
+    processed_dataset_path = Path(_require_path(config, "data.processed_data_path"))
+    if processed_dataset_path.suffix.lower() != ".pt":
+        raise ValueError("La ruta 'data.processed_data_path' debe terminar en '.pt'")
+
+    return config
+
+
+def resolve_tuning_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    validate_config_schema(config)
+    return config["model"]["tuning"]

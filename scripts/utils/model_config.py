@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from pytorch_forecasting import TemporalFusionTransformer
 from pytorch_forecasting.metrics import MAE, QuantileLoss
+from scripts.utils.config_validation import resolve_tuning_config
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class HyperparamFactory:
     @staticmethod
     def from_trial(trial, config: ModelConfig) -> Dict[str, Any]:
         """Generuje hiperparametry z trialu Optuna."""
-        tuning_config = config.config['training']['tuning']
+        tuning_config = resolve_tuning_config(config.config)
         return {
             "hidden_size": trial.suggest_int("hidden_size", tuning_config['min_hidden_size'], tuning_config['max_hidden_size']),
             "learning_rate": trial.suggest_float("learning_rate", tuning_config['min_learning_rate'], tuning_config['max_learning_rate'], log=True),
