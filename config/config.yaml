@@ -1,0 +1,104 @@
+# Konfiguracja modelu Temporal Fusion Transformer
+# Zawiera wszystkie ustawienia dla modelu, treningu, predykcji, danych i walidacji
+
+# Nazwa modelu
+model_name: Gen6_1
+
+# Ustawienia modelu
+model:
+  # Parametry architektury modelu
+  max_prediction_length: 60       # Maksymalna długość predykcji (dni)
+  min_encoder_length: 50          # Minimalna długość danych wejściowych
+  max_encoder_length: 180         # Maksymalna długość danych historycznych
+  hidden_size: 128                # Rozmiar warstwy ukrytej
+  attention_head_size: 4          # Liczba głowic uwagi
+  dropout: 0.3                    # Współczynnik dropout
+  learning_rate: 0.001            # Współczynnik uczenia
+  lstm_layers: 2                  # Liczba warstw LSTM
+  use_quantile_loss: true         # Włączenie straty kwantylowej
+  quantiles: [0.1, 0.5, 0.9]      # Kwantyle dla predykcji
+
+  # Rozmiary embeddingów dla zmiennych kategorycznych
+  embedding_sizes:
+    Sector: [12, 6]
+    Day_of_Week: [7, 4]
+    Month: [12, 6]
+
+  # Lista sektorów
+  sectors:
+    - Technology
+    - Healthcare
+    - Financials
+    - Consumer Discretionary
+    - Consumer Staples
+    - Energy
+    - Utilities
+    - Industrials
+    - Materials
+    - Communication Services
+    - Real Estate
+    - Unknown
+
+  # Parametry dla optymalizacji hiperparametrów (Optuna)
+  tuning:
+    min_hidden_size: 64            # Minimalny rozmiar warstwy ukrytej
+    max_hidden_size: 128           # Maksymalny rozmiar warstwy ukrytej
+    min_hidden_continuous_size: 64  # Minimalny rozmiar warstwy ukrytej dla danych ciągłych
+    max_hidden_continuous_size: 128 # Maksymalny rozmiar warstwy ukrytej dla danych ciągłych
+    min_lstm_layers: 1             # Minimalna liczba warstw LSTM
+    max_lstm_layers: 2             # Maksymalna liczba warstw LSTM
+    min_attention_head_size: 2     # Minimalna liczba głowic uwagi
+    max_attention_head_size: 4     # Maksymalna liczba głowic uwagi
+    min_dropout: 0.1               # Minimalny współczynnik dropout
+    max_dropout: 0.3               # Maksymalny współczynnik dropout
+    min_learning_rate: 1e-5        # Minimalny współczynnik uczenia
+    max_learning_rate: 1e-3        # Maksymalny współczynnik uczenia
+
+# Ustawienia treningu
+training:
+  max_epochs: 100               # Maksymalna liczba epok
+  optuna_trials: 5              # Liczba prób dla optymalizacji hiperparametrów
+  num_workers: 10                # Liczba workerów dla DataLoadera
+  prefetch_factor: 2             # Czynnik prefetch dla DataLoadera
+  early_stopping_patience: 10   # Cierpliwość dla wczesnego zatrzymania
+
+  reduce_lr_patience: 3         # Cierpliwość dla redukcji współczynnika uczenia
+  reduce_lr_factor: 0.6         # Czynnik redukcji współczynnika uczenia
+  weight_decay: 0.13            # Współczynnik decay dla wag
+
+  batch_size: 256               # Rozmiar partii dla treningu
+  auto_batch_size: true         # Włączenie automatycznej estymacji batch size (true/false)
+  max_vram_usage: 0.8           # Maksymalny procent użycia VRAM (0.0-1.0, np. 0.8 dla 80%)
+
+
+# Ustawienia predykcji
+prediction:
+  years: 3                      # Liczba lat historycznych do pobierania danych
+  batch_size: 256               # Rozmiar partii dla predykcji
+
+# Ustawienia walidacji
+validation:
+  debug: false                      # Włącz tylko do debugowania (wyłącza sanity checks dla prędkości)
+  enable_detailed_validation: false  # Czy włączyć szczegółowe logowanie walidacji
+  max_validation_batches_to_log: 2   # Maksymalna liczba batchy walidacyjnych do logowania
+  save_plots: true                   # Czy zapisywać wykresy walidacyjne
+  max_plots_per_epoch: 3             # Maksymalna liczba wykresów na epokę
+
+# Ustawienia danych
+data:
+  valid_regions: ['poland', 'europe', 'usa', 'global', 'all']  # Lista dozwolonych regionów
+  raw_data_path: data/stock_data.csv            # Ścieżka do surowych danych giełdowych
+  processed_data_path: data/train/processed_dataset.pt # Ścieżka do przetworzonego datasetu
+  processed_df_path: data/train/processed_df.pkl       # Ścieżka do przetworzonego DataFrame
+  tickers_file: config/tickers_with_names.yaml   # Plik z tickerami i nazwami spółek
+  benchmark_tickers_file: config/benchmark_tickers.yaml # Plik z tickerami benchmarkowymi
+  train_processed_df_path: data/train/train_processed_df.pkl  # Ścieżka do przetworzonego DataFrame dla treningu
+  val_processed_df_path: data/train/val_processed_df.pkl      # Ścieżka do przetworzonego DataFrame dla walidacji
+
+# Ścieżki do zapisu
+paths:
+  data_dir: data                # Katalog główny dla danych
+  models_dir: models             # Katalog do zapisu modeli
+  normalizers_dir: models/normalizers  # Katalog do zapisu normalizerów
+  config_dir: config             # Katalog do zapisu plików konfiguracyjnych
+  logs_dir: logs                # Katalog do zapisu logów
