@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
 
@@ -76,3 +77,25 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
 def resolve_tuning_config(config: Dict[str, Any]) -> Dict[str, Any]:
     validate_config_schema(config)
     return config["model"]["tuning"]
+
+
+def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
+    resolved = deepcopy(config)
+    model_name = resolved.get("model_name", "modelo")
+
+    resolved.setdefault("training", {})
+    resolved["training"].setdefault("batch_size_candidates", [256, 192, 128, 96, 64, 48, 32, 24, 16, 8, 4, 2, 1])
+    resolved["training"].setdefault("accelerator", "auto")
+    resolved["training"].setdefault("precision", "auto")
+
+    resolved.setdefault("prediction", {})
+    resolved["prediction"].setdefault("future_dates_mode", "approximate_business_days")
+
+    resolved.setdefault("paths", {})
+    resolved["paths"].setdefault("benchmark_history_db_path", "data/benchmarks_history.sqlite")
+    resolved["paths"].setdefault("model_save_path", str(Path(resolved["paths"]["models_dir"]) / f"{model_name}.pth"))
+
+    resolved.setdefault("artifacts", {})
+    resolved["artifacts"].setdefault("require_hash_validation", True)
+
+    return resolved

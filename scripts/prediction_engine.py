@@ -1,22 +1,20 @@
-import asyncio
-import json
 import logging
-import os
 import time
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
-import aiohttp
-import numpy as np
 import pandas as pd
 import torch
 from pytorch_forecasting import TimeSeriesDataSet
 
 from scripts.data_fetcher import DataFetcher
+from scripts.config_manager import ConfigManager
 from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
-from scripts.runtime_config import ConfigManager
+from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
 from scripts.utils.data_schema import build_schema_hash
+from scripts.utils.lightning_compat import LIGHTNING_LOGGER_NAME
 from scripts.utils.prediction_utils import (
     accumulate_quantile_price_paths,
     denormalize_logged_close,
@@ -24,15 +22,7 @@ from scripts.utils.prediction_utils import (
 )
 
 logger = logging.getLogger(__name__)
-logging.getLogger('pytorch_lightning').setLevel(logging.ERROR)
-
-
-def _load_artifact_metadata(metadata_path: Path) -> dict | None:
-    if not metadata_path.exists():
-        return None
-    with open(metadata_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
+logging.getLogger(LIGHTNING_LOGGER_NAME).setLevel(logging.ERROR)
 
 def _validate_schema_metadata(config: dict, metadata: dict | None, artifact_name: str):
     if metadata is None:
@@ -45,7 +35,7 @@ def _validate_schema_metadata(config: dict, metadata: dict | None, artifact_name
         raise ValueError(f"El artefacto {artifact_name} no es compatible con la configuracion actual")
 
 
-async def load_data_and_model_async(
+def load_data_and_model(
     config,
     ticker,
     temp_raw_data_path=None,
@@ -59,10 +49,9 @@ async def load_data_and_model_async(
     logger.info(f"Inferencia en dispositivo: {device}")
 
     if raw_data is None:
-        async with aiohttp.ClientSession() as session:
-            fetcher = DataFetcher(ConfigManager(), years)
-            start_date = pd.Timestamp(datetime.now(), tz='UTC') - pd.Timedelta(days=years * 365 + trim_days)
-            new_data = await fetcher.fetch_stock_data(ticker, start_date, datetime.now(), session)
+        fetcher = DataFetcher(ConfigManager(), years)
+        start_date = pd.Timestamp(datetime.now()).tz_localize(None) - pd.Timedelta(days=years * 365 + trim_days)
+        new_data = fetcher.fetch_stock_data(ticker, start_date, datetime.now().replace(tzinfo=None))
         if new_data.empty:
             raise ValueError(f"No se han podido descargar datos para {ticker}")
     else:
@@ -75,13 +64,17 @@ async def load_data_and_model_async(
         new_data.to_csv(temp_raw_data_path, index=False)
 
     dataset_path = Path(config['data']['processed_data_path'])
-    dataset_metadata = _load_artifact_metadata(Path(f"{dataset_path}.meta.json"))
+    ensure_relative_to(dataset_path, Path(config['paths']['data_dir']))
+    verify_checksum(dataset_path, required=config['artifacts']['require_hash_validation'])
+    dataset_metadata = read_metadata(dataset_path)
     _validate_schema_metadata(config, dataset_metadata, str(dataset_path))
-    dataset = TimeSeriesDataSet.load(dataset_path)
+    dataset = load_trusted_torch_artifact(dataset_path, trusted_types=[TimeSeriesDataSet])
+    if not isinstance(dataset, TimeSeriesDataSet):
+        raise TypeError(f"El artefacto {dataset_path} no contiene un TimeSeriesDataSet valido")
 
     config_manager = ConfigManager()
     model_name = config['model_name']
-    normalizers = config_manager.load_normalizers(model_name)
+    normalizers = config_manager.load_normalizers(model_name, required=True)
     normalizers_metadata = config_manager.get_last_normalizers_metadata()
     _validate_schema_metadata(config, normalizers_metadata, f"{model_name}_normalizers.pkl")
 
@@ -89,6 +82,8 @@ async def load_data_and_model_async(
     if not model_path.exists():
         raise FileNotFoundError(f"No existe el modelo {model_path}")
 
+    ensure_relative_to(model_path, Path(config['paths']['models_dir']))
+    verify_checksum(model_path, required=config['artifacts']['require_hash_validation'])
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     checkpoint_metadata = checkpoint.get('metadata')
     _validate_schema_metadata(config, checkpoint_metadata, str(model_path))
@@ -100,23 +95,8 @@ async def load_data_and_model_async(
     model.load_state_dict(checkpoint['state_dict'])
     model = model.to(device)
 
-    logger.info(f"load_data_and_model_async completado en {time.time() - start_time:.3f}s")
+    logger.info(f"load_data_and_model completado en {time.time() - start_time:.3f}s")
     return new_data, dataset, normalizers, model
-
-
-def load_data_and_model(config, ticker, temp_raw_data_path=None, historical_mode=False, trim_days=0, years=3, raw_data=None):
-    result = asyncio.get_event_loop().run_until_complete(
-        load_data_and_model_async(
-            config,
-            ticker,
-            temp_raw_data_path=temp_raw_data_path,
-            historical_mode=historical_mode,
-            trim_days=trim_days,
-            years=years,
-            raw_data=raw_data,
-        )
-    )
-    return result
 
 
 def preprocess_data(config, ticker_data, ticker, normalizers, historical_mode=False, trim_days=0):
@@ -154,10 +134,12 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
         persistent_workers=False,
     )
 
-    with torch.inference_mode(), torch.amp.autocast(
-        device_type='cuda' if torch.cuda.is_available() else 'cpu',
-        dtype=torch.float32,
-    ):
+    autocast_context = (
+        torch.amp.autocast(device_type='cuda', dtype=torch.float16)
+        if torch.cuda.is_available()
+        else nullcontext()
+    )
+    with torch.inference_mode(), autocast_context:
         predictions = model.predict(dataloader, mode='quantiles', return_x=True, trainer_kwargs={'logger': False})
 
     pred_array = predictions.output
@@ -168,7 +150,7 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
     pred_array = inverse_transform_if_available(target_normalizer, torch.from_numpy(pred_array))
 
     config_manager = ConfigManager()
-    normalizers = config_manager.load_normalizers(config['model_name'])
+    normalizers = config_manager.load_normalizers(config['model_name'], required=True)
     close_normalizer = normalizers.get('Close', target_normalizer)
     last_close_denorm = denormalize_logged_close(close_normalizer, float(ticker_data['Close'].iloc[-1]))
 

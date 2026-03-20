@@ -1,7 +1,7 @@
 import logging
 
 
-DEFAULT_LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 
 
 def configure_logging(level: int = logging.INFO):

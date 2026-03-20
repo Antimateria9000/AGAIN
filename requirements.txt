@@ -1,34 +1,19 @@
-# Nota: este archivo define dependencias de runtime y desarrollo ligero,
-# pero no sustituye a un lockfile resuelto por plataforma.
-# Para reproducibilidad estricta hace falta generar un lockfile en un entorno valido.
+# Entorno reproducible de referencia para CPU.
+# Para GPU, instala la variante oficial de torch segun la documentacion de PyTorch.
+--extra-index-url https://download.pytorch.org/whl/cpu
 
-# PyTorch con indice adicional para ruedas CUDA cuando proceda.
---extra-index-url https://download.pytorch.org/whl/cu128
+numpy==2.2.3
+pandas==2.2.3
+pyarrow==19.0.1
+PyYAML==6.0.2
+yfinance==0.2.54
 
-# Base numerica y de datos
-numpy>=1.24
-pandas>=2.0
-pyarrow>=15.0.0
-pandas-datareader
-PyYAML
+torch==2.7.0
+lightning==2.5.1.post0
+pytorch-forecasting==1.4.0
+optuna==4.2.1
 
-# Descarga y procesamiento de mercado
-yfinance
-aiohttp
-
-# Entrenamiento y forecasting
-torch>=2.3.0
-pytorch-lightning>=2.2.0
-pytorch-forecasting>=1.0.0
-optuna
-
-# Visualizacion y aplicacion
-streamlit
-plotly
-matplotlib
-seaborn
-nest_asyncio
-
-# Utilidades opcionales presentes en el repositorio
-fredapi
-python-dotenv
+streamlit==1.42.2
+plotly==6.0.0
+matplotlib==3.10.0
+seaborn==0.13.2

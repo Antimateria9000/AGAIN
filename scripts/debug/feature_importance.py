@@ -1,424 +1,115 @@
-import pandas as pd
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
+from __future__ import annotations
+
 import logging
-import pickle
-import yaml
-import sys
-import os
+from pathlib import Path
 
-# Dodaj katalog główny do ścieżek systemowych
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
-from scripts.model import build_model
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+import torch
+from pytorch_forecasting import TimeSeriesDataSet
+
 from scripts.config_manager import ConfigManager
+from scripts.model import build_model
 
-# Konfiguracja logowania
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Lista wszystkich możliwych sektorów
-ALL_SECTORS = [
-    'Technology', 'Healthcare', 'Financials', 'Consumer Discretionary', 'Consumer Staples',
-    'Energy', 'Utilities', 'Industrials', 'Materials', 'Communication Services',
-    'Real Estate', 'Unknown'
-]
 
 class FeatureImportanceAnalyzer:
-    """
-    Klasa do analizy ważności cech w modelach Temporal Fusion Transformer.
-    Wykorzystuje InterpretationVisualizer z pytorch_forecasting 1.4.0.
-    """
-    
     def __init__(self, config_path: str = "config/config.yaml"):
-        """
-        Inicjalizuje analizator ważności cech.
-        
-        Args:
-            config_path (str): Ścieżka do pliku konfiguracyjnego.
-        """
         self.config_manager = ConfigManager(config_path)
         self.config = self.config_manager.config
-        self.device = torch.device('cpu')
-        logger.info(f"Używane urządzenie: {self.device}")
-        
+        self.device = torch.device("cpu")
+
     def load_model_and_data(self):
-        """
-        Wczytuje model oraz dataset.
-        
-        Returns:
-            tuple: (model, dataset) - wytrenowany model oraz dataset.
-        """
-        try:
-            dataset_path = Path(self.config['data']['processed_data_path'])
-            dataset = torch.load(dataset_path, weights_only=False, map_location=self.device)
-            logger.info(f"Dataset wczytany z: {dataset_path}")
-            
-            # Dynamiczne budowanie ścieżki do modelu na podstawie model_name i models_dir
-            model_name = self.config['model_name']
-            checkpoint_path = Path(self.config['paths']['models_dir']) / f"{model_name}.pth"
-            if not checkpoint_path.exists():
-                raise FileNotFoundError(f"Checkpoint nie istnieje: {checkpoint_path}")
-                
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
-            hyperparams = checkpoint["hyperparams"]
-            if 'hidden_continuous_size' not in hyperparams:
-                hyperparams['hidden_continuous_size'] = self.config['model']['hidden_size'] // 2
-                
-            model = build_model(dataset, self.config, hyperparams=hyperparams)
-            model.load_state_dict(checkpoint["state_dict"])
-            model.eval()
-            model = model.to(self.device)
-            logger.info(f"Model wczytany poprawnie z {checkpoint_path} i przeniesiony na {self.device}.")
-            
-            return model, dataset
-            
-        except Exception as e:
-            logger.error(f"Błąd podczas wczytywania modelu lub datasetu: {e}")
-            raise
+        dataset_path = Path(self.config["data"]["processed_data_path"])
+        dataset = TimeSeriesDataSet.load(dataset_path)
+        model_name = self.config["model_name"]
+        checkpoint_path = Path(self.config["paths"]["models_dir"]) / f"{model_name}.pth"
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        hyperparams = checkpoint["hyperparams"]
+        if "hidden_continuous_size" not in hyperparams:
+            hyperparams["hidden_continuous_size"] = self.config["model"]["hidden_size"] // 2
+        model = build_model(dataset, self.config, hyperparams=hyperparams)
+        model.load_state_dict(checkpoint["state_dict"])
+        model.eval()
+        model = model.to(self.device)
+        return model, dataset
 
-    def analyze_feature_importance(self, output_csv: str = "data/feature_importance_analysis/feature_importance.csv", output_csv_no_attention: str = "data/feature_importance_analysis/feature_importance_no_attention.csv"):
-        """
-        Oblicza ważność cech i zapisuje wyniki do pliku CSV.
-        
-        Args:
-            output_csv (str): Ścieżka do pliku CSV, gdzie zapisane zostaną wyniki.
-            output_csv_no_attention (str): Ścieżka do pliku CSV bez cech attention.
-        
-        Returns:
-            pd.DataFrame: DataFrame z wynikami.
-        """
-        try:
-            model, dataset = self.load_model_and_data()
-            
-            feature_mapping = self._get_feature_names_from_dataset(dataset)
-            
-            dataloader = dataset.to_dataloader(
-                train=False, 
-                batch_size=self.config['training']['batch_size'],
-                num_workers=0
-            )
-            
-            x, _ = next(iter(dataloader))
-            x = {k: (v.to(self.device) if isinstance(v, torch.Tensor) else v) for k, v in x.items()}
-            
-            logger.info("Obliczanie ważności cech...")
-            with torch.no_grad():
-                interpretation = model.interpret_output(x)
-                logger.info(f"Dostępne klucze w interpretacji: {list(interpretation.keys())}")
-            
-            importance_data = []
-            
-            if 'variable_importance' in interpretation:
-                for var_name, importance in interpretation['variable_importance'].items():
-                    feature_name = var_name.replace('_encoder', '').replace('_decoder', '')
-                    if '__' in feature_name:
-                        feature_name = feature_name.split('__')[0]
-                    importance_data.append({
-                        'Feature': feature_name,
-                        'Variable_Importance': float(importance),
-                        'Static_Importance': 0.0,
-                        'Encoder_Importance': 0.0,
-                        'Decoder_Importance': 0.0,
-                        'Attention_Importance': 0.0,
-                        'Total_Importance': float(importance),
-                        'Type': 'Variable'
+    def analyze_feature_importance(self, output_csv: str = "data/feature_importance_analysis/feature_importance.csv"):
+        model, dataset = self.load_model_and_data()
+        dataloader = dataset.to_dataloader(train=False, batch_size=self.config["training"]["batch_size"], num_workers=0)
+        x, _ = next(iter(dataloader))
+        x = {key: (value.to(self.device) if isinstance(value, torch.Tensor) else value) for key, value in x.items()}
+
+        logger.info("Calculando importancia de features...")
+        with torch.no_grad():
+            interpretation = model.interpret_output(x)
+
+        importance_rows = []
+        for block_name in ("variable_importance", "static_variables", "encoder_variables", "decoder_variables"):
+            block = interpretation.get(block_name)
+            if isinstance(block, dict):
+                for feature_name, importance in block.items():
+                    cleaned_name = feature_name.replace("_encoder", "").replace("_decoder", "")
+                    importance_rows.append({
+                        "Feature": cleaned_name,
+                        "Importance": float(importance),
+                        "Type": block_name,
                     })
-            
-            if 'static_variables' in interpretation:
-                static_vars = interpretation['static_variables']
-                if isinstance(static_vars, dict):
-                    for var_name, importance in static_vars.items():
-                        importance_data.append({
-                            'Feature': var_name,
-                            'Variable_Importance': 0.0,
-                            'Static_Importance': float(importance),
-                            'Encoder_Importance': 0.0,
-                            'Decoder_Importance': 0.0,
-                            'Attention_Importance': 0.0,
-                            'Total_Importance': float(importance),
-                            'Type': 'Static'
-                        })
-                elif isinstance(static_vars, torch.Tensor):
-                    logger.info(f"static_variables jest tensorem o kształcie: {static_vars.shape}")
-                    static_mean = static_vars.mean(dim=0) if static_vars.dim() > 1 else static_vars
-                    feature_names = feature_mapping.get('static_variables', [])
-                    
-                    for i in range(static_mean.shape[0]):
-                        feature_name = feature_names[i] if i < len(feature_names) else f'static_var_{i}'
-                        importance_data.append({
-                            'Feature': feature_name,
-                            'Variable_Importance': 0.0,
-                            'Static_Importance': float(static_mean[i]),
-                            'Encoder_Importance': 0.0,
-                            'Decoder_Importance': 0.0,
-                            'Attention_Importance': 0.0,
-                            'Total_Importance': float(static_mean[i]),
-                            'Type': 'Static'
-                        })
-            
-            for key in ['encoder_variables', 'decoder_variables']:
-                if key in interpretation:
-                    variables = interpretation[key]
-                    if isinstance(variables, dict):
-                        for var_name, importance in variables.items():
-                            feature_name = var_name.replace('_encoder', '').replace('_decoder', '')
-                            if '__' in feature_name:
-                                feature_name = feature_name.split('__')[0]
-                            entry = {
-                                'Feature': feature_name,
-                                'Variable_Importance': 0.0,
-                                'Static_Importance': 0.0,
-                                'Encoder_Importance': float(importance) if key == 'encoder_variables' else 0.0,
-                                'Decoder_Importance': float(importance) if key == 'decoder_variables' else 0.0,
-                                'Attention_Importance': 0.0,
-                                'Total_Importance': float(importance),
-                                'Type': key.capitalize().replace('_variables', '')
-                            }
-                            importance_data.append(entry)
-                    elif isinstance(variables, torch.Tensor):
-                        logger.info(f"{key} jest tensorem o kształcie: {variables.shape}")
-                        vars_mean = variables.mean(dim=0) if variables.dim() > 1 else variables
-                        feature_names = feature_mapping.get(key, [])
-                        
-                        for i in range(vars_mean.shape[0]):
-                            feature_name = feature_names[i] if i < len(feature_names) else f'{key}_{i}'
-                            entry = {
-                                'Feature': feature_name,
-                                'Variable_Importance': 0.0,
-                                'Static_Importance': 0.0,
-                                'Encoder_Importance': float(vars_mean[i]) if key == 'encoder_variables' else 0.0,
-                                'Decoder_Importance': float(vars_mean[i]) if key == 'decoder_variables' else 0.0,
-                                'Attention_Importance': 0.0,
-                                'Total_Importance': float(vars_mean[i]),
-                                'Type': key.capitalize().replace('_variables', '')
-                            }
-                            importance_data.append(entry)
-            
-            if 'attention' in interpretation:
-                attention_data = interpretation['attention']
-                if isinstance(attention_data, dict):
-                    for var_name, importance in attention_data.items():
-                        feature_name = var_name.replace('_encoder', '').replace('_decoder', '')
-                        if '__' in feature_name:
-                            feature_name = feature_name.split('__')[0]
-                        entry = {
-                            'Feature': feature_name,
-                            'Variable_Importance': 0.0,
-                            'Static_Importance': 0.0,
-                            'Encoder_Importance': 0.0,
-                            'Decoder_Importance': 0.0,
-                            'Attention_Importance': float(importance),
-                            'Total_Importance': float(importance),
-                            'Type': 'Attention'
-                        }
-                        importance_data.append(entry)
-                elif isinstance(attention_data, torch.Tensor):
-                    logger.info(f"attention jest tensorem o kształcie: {attention_data.shape}")
-                    attention_mean = attention_data.mean(dim=tuple(range(attention_data.dim() - 1)))
-                    encoder_names = feature_mapping.get('encoder_variables', [])
-                    
-                    for i in range(attention_mean.shape[0]):
-                        feature_name = f"{encoder_names[i]}_attention" if i < len(encoder_names) else f'attention_feature_{i}'
-                        entry = {
-                            'Feature': feature_name,
-                            'Variable_Importance': 0.0,
-                            'Static_Importance': 0.0,
-                            'Encoder_Importance': 0.0,
-                            'Decoder_Importance': 0.0,
-                            'Attention_Importance': float(attention_mean[i]),
-                            'Total_Importance': float(attention_mean[i]),
-                            'Type': 'Attention'
-                        }
-                        importance_data.append(entry)
-            
-            importance_df = pd.DataFrame(importance_data)
-            
-            if importance_df.empty:
-                logger.warning("Brak danych o ważności cech do zapisania.")
-                return None
-                
-            total_sum = importance_df['Total_Importance'].sum()
-            if total_sum > 0:
-                importance_df['Total_Importance_Normalized'] = importance_df['Total_Importance'] / total_sum
-            else:
-                importance_df['Total_Importance_Normalized'] = 0.0
-                
-            importance_df = importance_df.sort_values('Total_Importance', ascending=False)
-            
-            output_path = Path(output_csv)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            importance_df.to_csv(output_path, index=False)
-            logger.info(f"Ważność cech zapisana do: {output_path}")
-            
-            # Tworzenie pliku CSV bez cech attention
-            no_attention_df = importance_df[
-                (~importance_df['Feature'].str.contains('attention', case=False, na=False)) &
-                (~importance_df['Feature'].str.contains('attention_feature_', case=False, na=False))
-            ].copy()
-            no_attention_path = Path(output_csv_no_attention)
-            no_attention_df.to_csv(no_attention_path, index=False)
-            logger.info(f"Ważność cech bez attention zapisana do: {no_attention_path}")
-            
-            logger.info("Top 10 najważniejszych cech:")
-            for i, (feature, importance) in enumerate(
-                zip(importance_df['Feature'].head(10), importance_df['Total_Importance_Normalized'].head(10))
-            ):
-                logger.info(f"{i+1}. {feature}: {importance:.4f}")
-                
-            return importance_df
-                
-        except Exception as e:
-            logger.error(f"Błąd podczas obliczania ważności cech: {e}")
-            raise
-            
-    def plot_feature_importance(self, importance_df=None, output_dir="data/feature_importance_analysis"):
-        """
-        Tworzy dwa wykresy: dla 10 najważniejszych cech i 10 najmniej istotnych cech.
-        
-        Args:
-            importance_df (pd.DataFrame, optional): DataFrame z ważnością cech.
-            output_dir (str): Katalog, gdzie zapisane zostaną wykresy.
-        """
-        try:
-            if importance_df is None:
-                importance_df = self.analyze_feature_importance()
-                if importance_df is None:
-                    raise ValueError("Nie udało się utworzyć danych do wykresów.")
-            
-            # Filtracja rzeczywistych cech (usunięcie artefaktów typu 'attention')
-            real_features_df = importance_df[
-                (~importance_df['Feature'].str.contains('attention', case=False, na=False)) &
-                (~importance_df['Feature'].str.contains('attention_feature_', case=False, na=False))
-            ].copy()
-            
-            if real_features_df.empty:
-                logger.warning("Brak prawdziwych cech do wyświetlenia na wykresach.")
-                return
-            
-            # Sortowanie i wybór dokładnie 10 najlepszych cech
-            real_features_df = real_features_df.sort_values('Total_Importance_Normalized', ascending=False)
-            top_10_df = real_features_df.head(10)
-            
-            # Tworzenie katalogu wyjściowego
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-            
-            # Wykres 1: Top 10 najważniejszych cech
-            plt.figure(figsize=(14, 8))
-            sns.set_theme(style="whitegrid")
-            ax = sns.barplot(
-                x='Total_Importance_Normalized',
-                y='Feature',
-                data=top_10_df,
-                palette="viridis",
-                hue='Feature',
-                dodge=False,
-                legend=False
-            )
-            plt.title('Top 10 najważniejszych cech w modelu Temporal Fusion Transformer', fontsize=16, pad=20)
-            plt.xlabel('Znormalizowana ważność', fontsize=12)
-            plt.ylabel('Cecha', fontsize=12)
-            max_value = top_10_df['Total_Importance_Normalized'].max()
-            for i, v in enumerate(top_10_df['Total_Importance_Normalized']):
-                ax.text(v + 0.0005, i, f"{v:.4f}", va='center', fontsize=10)
-            plt.xlim(0, max_value * 1.1)
-            plt.tight_layout()
-            top_plot_path = output_path / 'top_10_feature_importance.png'
-            plt.savefig(top_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            logger.info(f"Wykres top 10 cech zapisany do {top_plot_path}")
-            
-            # Wykres 2: Top 10 najmniej istotnych cech
-            bottom_10_df = real_features_df.tail(10).sort_values('Total_Importance_Normalized')
-            plt.figure(figsize=(14, 8))
-            sns.set_theme(style="whitegrid")
-            ax = sns.barplot(
-                x='Total_Importance_Normalized',
-                y='Feature',
-                data=bottom_10_df,
-                palette="magma",
-                hue='Feature',
-                dodge=False,
-                legend=False
-            )
-            plt.title('Top 10 najmniej istotnych cech w modelu Temporal Fusion Transformer', fontsize=16, pad=20)
-            plt.xlabel('Znormalizowana ważność', fontsize=12)
-            plt.ylabel('Cecha', fontsize=12)
-            max_value_bottom = bottom_10_df['Total_Importance_Normalized'].max()
-            for i, v in enumerate(bottom_10_df['Total_Importance_Normalized']):
-                ax.text(v + 0.0005, i, f"{v:.4f}", va='center', fontsize=10)
-            plt.xlim(0, max_value_bottom * 1.1)
-            plt.tight_layout()
-            bottom_plot_path = output_path / 'bottom_10_feature_importance.png'
-            plt.savefig(bottom_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            logger.info(f"Wykres najmniej istotnych cech zapisany do {bottom_plot_path}")
-            
-            logger.info(f"Wykresy zawierają 10 najważniejszych i 10 najmniej istotnych cech")
-            
-        except Exception as e:
-            logger.error(f"Błąd podczas tworzenia wykresów: {e}")
-            raise
 
-    def _get_feature_names_from_dataset(self, dataset):
-        """
-        Pobiera nazwy cech z datasetu.
-        
-        Returns:
-            dict: Słownik mapujący indeksy na nazwy cech
-        """
-        feature_mapping = {
-            'encoder_variables': [],
-            'decoder_variables': [],
-            'static_variables': []
-        }
-        
-        try:
-            if hasattr(dataset, 'reals'):
-                feature_mapping['encoder_variables'] = dataset.reals.copy()
-                feature_mapping['decoder_variables'] = dataset.reals.copy()
-                
-            if hasattr(dataset, 'categoricals'):
-                feature_mapping['encoder_variables'].extend(dataset.categoricals)
-                feature_mapping['decoder_variables'].extend(dataset.categoricals)
-                
-            if hasattr(dataset, 'static_categoricals'):
-                feature_mapping['static_variables'].extend(dataset.static_categoricals)
-                
-            if hasattr(dataset, 'static_reals'):
-                feature_mapping['static_variables'].extend(dataset.static_reals)
-                
-            feature_mapping['static_variables'].append('Sector')
-            
-            logger.info(f"Znaleziono nazwy cech:")
-            logger.info(f"  encoder_variables: {len(feature_mapping['encoder_variables'])} cech")
-            logger.info(f"  decoder_variables: {len(feature_mapping['decoder_variables'])} cech")
-            logger.info(f"  static_variables: {len(feature_mapping['static_variables'])} cech")
-            
-        except Exception as e:
-            logger.warning(f"Nie udało się pobrać nazw cech z datasetu: {e}")
-            
-        return feature_mapping
-        
-def calculate_feature_importance(config_path: str = "config/config.yaml", output_csv: str = "data/feature_importance_analysis/feature_importance.csv", output_csv_no_attention: str = "data/feature_importance_analysis/feature_importance_no_attention.csv"):
-    """
-    Oblicza ważność cech dla modelu TemporalFusionTransformer i zapisuje wyniki do pliku CSV.
-    
-    Args:
-        config_path (str): Ścieżka do pliku konfiguracyjnego.
-        output_csv (str): Ścieżka do pliku CSV, gdzie zapisane zostaną wyniki.
-        output_csv_no_attention (str): Ścieżka do pliku CSV bez cech attention.
-    """
+        importance_df = pd.DataFrame(importance_rows)
+        if importance_df.empty:
+            raise ValueError("No se ha podido extraer importancia de features")
+        importance_df = importance_df.groupby(["Feature", "Type"], as_index=False)["Importance"].sum()
+        total_sum = importance_df["Importance"].sum()
+        importance_df["Importance_Normalized"] = importance_df["Importance"] / total_sum if total_sum > 0 else 0.0
+        importance_df = importance_df.sort_values("Importance_Normalized", ascending=False)
+
+        output_path = Path(output_csv)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        importance_df.to_csv(output_path, index=False)
+        logger.info("Importancia de features guardada en %s", output_path)
+        return importance_df
+
+    def plot_feature_importance(self, importance_df: pd.DataFrame | None = None, output_dir: str = "data/feature_importance_analysis"):
+        if importance_df is None:
+            importance_df = self.analyze_feature_importance()
+
+        feature_df = importance_df.groupby("Feature", as_index=False)["Importance_Normalized"].sum().sort_values("Importance_Normalized", ascending=False)
+        top_df = feature_df.head(10)
+        bottom_df = feature_df.tail(10).sort_values("Importance_Normalized")
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        sns.set_theme(style="whitegrid")
+
+        for title, data, filename, palette in (
+            ("Top 10 features mas importantes", top_df, "top_10_feature_importance.png", "viridis"),
+            ("Top 10 features menos importantes", bottom_df, "bottom_10_feature_importance.png", "magma"),
+        ):
+            plt.figure(figsize=(14, 8))
+            ax = sns.barplot(x="Importance_Normalized", y="Feature", data=data, palette=palette, hue="Feature", dodge=False, legend=False)
+            plt.title(title)
+            plt.xlabel("Importancia normalizada")
+            plt.ylabel("Feature")
+            for index, value in enumerate(data["Importance_Normalized"]):
+                ax.text(value + 0.0005, index, f"{value:.4f}", va="center", fontsize=10)
+            plot_path = output_path / filename
+            plt.tight_layout()
+            plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+            plt.close()
+            logger.info("Grafico guardado en %s", plot_path)
+
+
+
+def calculate_feature_importance(config_path: str = "config/config.yaml", output_csv: str = "data/feature_importance_analysis/feature_importance.csv"):
     analyzer = FeatureImportanceAnalyzer(config_path)
-    importance_df = analyzer.analyze_feature_importance(output_csv, output_csv_no_attention)
+    importance_df = analyzer.analyze_feature_importance(output_csv)
     analyzer.plot_feature_importance(importance_df)
     return importance_df
 
+
 if __name__ == "__main__":
-    logger.info("Rozpoczynanie analizy ważności cech...")
     calculate_feature_importance()
-    logger.info("Analiza ważności cech zakończona.")

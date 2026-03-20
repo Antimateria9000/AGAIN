@@ -1,88 +1,78 @@
-from pytorch_forecasting import TemporalFusionTransformer
-from pytorch_lightning import LightningModule
-import torch
-import logging
-from typing import Dict, Any, Optional, List, Tuple
-import sys
-import os
-import time
+from __future__ import annotations
 
-# Dodaj katalog główny do ścieżek systemowych
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from scripts.runtime_config import ConfigManager
-from scripts.utils.model_config import ModelConfig, HyperparamFactory
-from scripts.utils.validation_utils import log_validation_details, create_validation_plot
+import logging
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+from pytorch_forecasting import TemporalFusionTransformer
+
+from scripts.config_manager import ConfigManager
+from scripts.utils.lightning_compat import LightningModule
+from scripts.utils.model_config import HyperparamFactory, ModelConfig
+from scripts.utils.validation_utils import create_validation_plot, log_validation_details
 
 logger = logging.getLogger(__name__)
-
-# Ustaw precyzję dla Tensor Cores na GPU
-torch.set_float32_matmul_precision('medium')
-
-# Dodana optymalizacja: Włącz TF32 dla szybszych matmul w mixed precision
+torch.set_float32_matmul_precision("medium")
 torch.backends.cuda.matmul.allow_tf32 = True
 
+
+
 def move_to_device(obj: Any, device: torch.device) -> Any:
-    """Rekurencyjnie przenosi tensory na wskazane urządzenie asynchronicznie z non_blocking=True."""
     if isinstance(obj, torch.Tensor):
         if obj.device == device:
             return obj
         return obj.to(device, non_blocking=True)
-    elif isinstance(obj, dict):
-        return {key: move_to_device(val, device) for key, val in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    if isinstance(obj, dict):
+        return {key: move_to_device(value, device) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
         return type(obj)(move_to_device(item, device) for item in obj)
     return obj
 
-def sanitize_tensor(tensor: torch.Tensor, fill_value: float = 0.0) -> torch.Tensor:
-    """Usuwa NaN i Inf z tensora, zastępując je fill_value."""
-    if torch.isnan(tensor).any() or torch.isinf(tensor).any():
-        logger.warning("Wykryto NaN lub Inf w tensorze, zastępuję wartościami 0.0")
-        return torch.nan_to_num(tensor, nan=fill_value, posinf=fill_value, neginf=fill_value)
-    return tensor
 
 class CustomTemporalFusionTransformer(LightningModule):
     def __init__(self, dataset, config: Dict[str, Any], hyperparams: Optional[Dict[str, Any]] = None):
         super().__init__()
         self.model_config = ModelConfig(config)
         self.hyperparams = hyperparams if hyperparams else self.model_config.default_hyperparams
-        self.model_name = config['model_name']
+        self.model_name = config["model_name"]
         self.dataset = dataset
         self.config_manager = ConfigManager()
+        self.batch_size = int(config["training"]["batch_size"])
         self._load_normalizers()
         self._initialize_model(dataset)
         self._save_hyperparameters()
         self.val_batch_count = 0
-        self.enable_detailed_validation = config['validation']['enable_detailed_validation'] 
-        self.max_val_batches_to_log = config['validation']['max_validation_batches_to_log']
-        self.save_plots = config['validation']['save_plots']  
-        self.max_plots_per_epoch = config['validation']['max_plots_per_epoch']
-        self.logs_dir = config['paths']['logs_dir']
+        self.enable_detailed_validation = config["validation"]["enable_detailed_validation"]
+        self.max_val_batches_to_log = config["validation"]["max_validation_batches_to_log"]
+        self.save_plots = config["validation"]["save_plots"]
+        self.max_plots_per_epoch = config["validation"]["max_plots_per_epoch"]
+        self.logs_dir = config["paths"]["logs_dir"]
         self.plot_count = 0
-        self.debug = config['validation']['debug']
+        self.debug = config["validation"]["debug"]
 
     def _load_normalizers(self):
-        """Wczytuje normalizery za pomocą ConfigManager."""
         try:
             self.normalizers = self.config_manager.load_normalizers(self.model_name)
-            logger.info(f"Wczytano normalizery dla modelu: {self.model_name}")
-        except Exception as e:
-            logger.error(f"Błąd wczytywania normalizerów: {e}")
+            logger.info("Normalizadores cargados para %s", self.model_name)
+        except Exception as exc:
+            logger.error("Error al cargar normalizadores: %s", exc)
             self.normalizers = {}
 
     def _initialize_model(self, dataset):
-        """Inicjalizuje TemporalFusionTransformer z filtrowanymi parametrami."""
         filtered_params = self.model_config.get_filtered_params(self.hyperparams)
-        logger.info(f"Parametry przekazywane do TemporalFusionTransformer: {filtered_params}")
-        # użyj podklasy z nadpisanym transfer_batch_to_device
+        logger.info("Parametros usados por TemporalFusionTransformer: %s", filtered_params)
         self.model = TFTWithTransfer.from_dataset(dataset, **filtered_params)
 
     def _save_hyperparameters(self):
-        """Zapisuje hiperparametry, ignorując 'loss' i dodając informacje o quantile."""
-        hparams_to_save = {k: v for k, v in self.hyperparams.items() if k != 'loss'}
+        hparams_to_save = {
+            key: value
+            for key, value in self.hyperparams.items()
+            if key not in {"loss", "logging_metrics"}
+        }
         self.save_hyperparameters(hparams_to_save)
 
     def on_fit_start(self):
-        """Przenosi model na GPU przed rozpoczęciem treningu."""
         self.model.to(self.device)
 
     def forward(self, x: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -93,148 +83,125 @@ class CustomTemporalFusionTransformer(LightningModule):
         return output
 
     def predict(self, data, **kwargs):
-        """Deleguje predykcję do wewnętrznego modelu. Nie opakowujemy DataLoadera — Lightning przeniesie batch."""
         start_time = time.time()
         self.eval()
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logger.info(f"Uruchamianie predykcji na urządzeniu: {device}")
-
-        # Nie opakowujemy DataLoadera — przekażemy go bezpośrednio
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("Prediccion en dispositivo: %s", device)
         if isinstance(data, torch.utils.data.DataLoader):
             predictions = self.model.predict(data, **kwargs)
         else:
-            data_gpu = move_to_device(data, device)
-            predictions = self.model.predict(data_gpu, **kwargs)
-
-        prediction_duration = time.time() - start_time
-        logger.info(f"Kształt zwracanych predykcji: {predictions.output.shape}")
-        logger.info(f"Czas predykcji w metodzie predict: {prediction_duration:.3f} sekundy")
+            predictions = self.model.predict(move_to_device(data, device), **kwargs)
+        logger.info("Forma de prediccion: %s", predictions.output.shape)
+        logger.info("Tiempo de prediccion: %.3fs", time.time() - start_time)
         return predictions
 
     def interpret_output(self, x: Dict[str, torch.Tensor], **kwargs) -> Dict[str, Any]:
-        """Deleguje interpretację wyjścia do wewnętrznego modelu TFT."""
         x = move_to_device(x, self.device)
         try:
             self.model.eval()
             with torch.no_grad():
                 full_output = self.model(x)
                 if isinstance(full_output, dict):
-                    logger.info(f"Model zwrócił następujące klucze: {list(full_output.keys())}")
                     return self.model.interpret_output(full_output, **kwargs)
+                if hasattr(self.model, "_forward_full"):
+                    full_output = self.model._forward_full(x)
                 else:
-                    logger.info("Model zwrócił tensor, konwertuję na format słownikowy")
-                    if hasattr(self.model, '_forward_full'):
-                        full_output = self.model._forward_full(x)
-                    else:
-                        full_output = self.model.forward(x)
-                    return self.model.interpret_output(full_output, **kwargs)
-        except Exception as e:
-            logger.error(f"Błąd w interpret_output: {e}")
-            try:
-                self.model.train()
-                full_output = self.model(x)
-                self.model.eval()
+                    full_output = self.model.forward(x)
                 return self.model.interpret_output(full_output, **kwargs)
-            except Exception as e2:
-                logger.error(f"Alternatywna metoda również nie działa: {e2}")
-                raise e
-            
+        except Exception as exc:
+            logger.error("Error en interpret_output: %s", exc)
+            raise
+
     def _shared_step(self, batch: Tuple[Dict[str, torch.Tensor], List[torch.Tensor]], batch_idx: int, stage: str) -> torch.Tensor:
         x, y = batch
         x = move_to_device(x, self.device)
         y_target = move_to_device(y[0], self.device)
-        
+
         if torch.isnan(y_target).any() or torch.isinf(y_target).any():
             raise ValueError(f"y_target contiene NaN o Inf en batch {batch_idx}")
 
-        with torch.amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu', dtype=torch.bfloat16):
+        with torch.amp.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", dtype=torch.bfloat16):
             y_hat = self(x)
-
             if torch.isnan(y_hat).any() or torch.isinf(y_hat).any():
                 raise ValueError(f"y_hat contiene NaN o Inf en batch {batch_idx}")
-
             loss = self.model.loss(y_hat, y_target)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Loss no finita en batch {batch_idx}: {loss}")
 
-            if stage == 'val':
+            if stage == "val":
                 y_hat_median = y_hat[:, :, 1] if y_hat.dim() == 3 else y_hat
                 mape = torch.mean(torch.abs((y_target - y_hat_median) / (y_target + 1e-10))) * 100
-                self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
-
+                self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
                 direction_pred = torch.sign(y_hat_median)
                 direction_true = torch.sign(y_target)
                 directional_accuracy = (direction_pred == direction_true).float().mean() * 100
-                self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x['encoder_cont'].size(0))
+                self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
 
-        batch_size = x['encoder_cont'].size(0)
+        batch_size = x["encoder_cont"].size(0)
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
-        
+
         try:
-            l2_norm = sum(p.pow(2).sum() for p in self.parameters() if p.requires_grad).sqrt().item()
+            l2_norm = sum(parameter.pow(2).sum() for parameter in self.parameters() if parameter.requires_grad).sqrt().item()
             self.log(f"{stage}_l2_norm", l2_norm, on_step=True, on_epoch=True, prog_bar=False, batch_size=batch_size)
-        except Exception as e:
-            logger.warning(f"Nie można obliczyć l2_norm: {e}")
-        
-        if stage == 'val':
-            # Szczegółowe logowanie walidacji (tylko jeśli włączone)
+        except Exception as exc:
+            logger.warning("No se puede calcular l2_norm: %s", exc)
+
+        if stage == "val":
             if self.enable_detailed_validation and self.val_batch_count < self.max_val_batches_to_log:
                 try:
                     log_validation_details(
-                        x, y_hat, y_target, batch_idx,
-                        self.normalizers, self.dataset,
-                        self.save_plots, self.plot_count, self.max_plots_per_epoch,
-                        self.logs_dir, self.current_epoch
+                        x,
+                        y_hat,
+                        y_target,
+                        batch_idx,
+                        self.normalizers,
+                        self.dataset,
+                        self.save_plots,
+                        self.plot_count,
+                        self.max_plots_per_epoch,
+                        self.logs_dir,
+                        self.current_epoch,
                     )
                     self.val_batch_count += 1
-                except Exception as e:
-                    logger.error(f"Błąd w logowaniu szczegółów walidacji: {e}")
-            # Generowanie wykresów niezależnie od enable_detailed_validation
+                except Exception as exc:
+                    logger.error("Error al registrar detalles de validacion: %s", exc)
+
             if self.save_plots and self.plot_count < self.max_plots_per_epoch:
                 try:
-                    relative_returns_normalizer = self.normalizers.get('Relative_Returns') or self.dataset.target_normalizer
+                    relative_returns_normalizer = self.normalizers.get("Relative_Returns") or self.dataset.target_normalizer
                     if relative_returns_normalizer:
                         y_hat_denorm = relative_returns_normalizer.inverse_transform(y_hat.float().cpu())
                         y_target_denorm = relative_returns_normalizer.inverse_transform(y_target.float().cpu())
-                        create_validation_plot(
-                            y_hat_denorm, y_target_denorm, batch_idx,
-                            self.logs_dir, self.current_epoch
-                        )
+                        create_validation_plot(y_hat_denorm, y_target_denorm, batch_idx, self.logs_dir, self.current_epoch)
                         self.plot_count += 1
                     else:
-                        logger.warning("Brak normalizera dla 'Relative_Returns' do wykresu")
-                except Exception as e:
-                    logger.error(f"Błąd podczas tworzenia wykresu walidacyjnego: {e}")
-        
+                        logger.warning("No existe normalizador para Relative_Returns")
+                except Exception as exc:
+                    logger.error("Error al crear grafico de validacion: %s", exc)
+
         return loss
-    
+
     def on_validation_epoch_end(self) -> None:
-        """Loguje val_l2_norm i learning_rate na końcu każdej epoki walidacyjnej oraz resetuje licznik wykresów."""
-        val_l2_norm = self.trainer.callback_metrics.get("val_l2_norm", None)
+        val_l2_norm = self.trainer.callback_metrics.get("val_l2_norm")
         if val_l2_norm is not None:
-            logger.info(f"Validation epoch end: val_l2_norm = {val_l2_norm:.4f}")
-        else:
-            logger.warning("val_l2_norm nie jest dostępne w callback_metrics")
+            logger.info("Validation epoch end: val_l2_norm = %.4f", val_l2_norm)
 
         optimizer = self.optimizers()
         if optimizer is not None:
-            current_lr = optimizer.param_groups[0]['lr']
-            logger.info(f"Validation epoch end: learning_rate = {current_lr:.6f}")
-        else:
-            logger.warning("Optimizer nie jest dostępny, brak learning_rate")
+            current_lr = optimizer.param_groups[0]["lr"]
+            logger.info("Validation epoch end: learning_rate = %.6f", current_lr)
         self.val_batch_count = 0
-        self.plot_count = 0  # Resetowanie licznika wykresów na końcu epoki
+        self.plot_count = 0
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        """Konfiguruje optymalizator i scheduler."""
-        learning_rate = self.hyperparams.get('learning_rate', self.model_config.config['model']['learning_rate'])
-        weight_decay = self.model_config.config['training']['weight_decay']
+        learning_rate = self.hyperparams.get("learning_rate", self.model_config.config["model"]["learning_rate"])
+        weight_decay = self.model_config.config["training"]["weight_decay"]
         optimizer = torch.optim.AdamW(self.parameters(), lr=learning_rate, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
-            patience=self.model_config.config['training']['reduce_lr_patience'],
-            factor=self.model_config.config['training']['reduce_lr_factor'],
-            mode='min'
+            patience=self.model_config.config["training"]["reduce_lr_patience"],
+            factor=self.model_config.config["training"]["reduce_lr_factor"],
+            mode="min",
         )
         return {
             "optimizer": optimizer,
@@ -245,24 +212,19 @@ class CustomTemporalFusionTransformer(LightningModule):
         }
 
     def training_step(self, batch: Tuple[Dict[str, torch.Tensor], List[torch.Tensor]], batch_idx: int) -> torch.Tensor:
-        """
-        Metoda wymagana przez PyTorch Lightning do treningu.
-        """
-        return self._shared_step(batch, batch_idx, stage='train')
+        return self._shared_step(batch, batch_idx, stage="train")
 
     def validation_step(self, batch: Tuple[Dict[str, torch.Tensor], List[torch.Tensor]], batch_idx: int) -> torch.Tensor:
-        """
-        Metoda wymagana przez PyTorch Lightning do walidacji.
-        """
-        return self._shared_step(batch, batch_idx, stage='val')
+        return self._shared_step(batch, batch_idx, stage="val")
 
-# dodaj subclass, która użyje Twojej funkcji move_to_device
+
 class TFTWithTransfer(TemporalFusionTransformer):
     def transfer_batch_to_device(self, batch, device, dataloader_idx=0):
         return move_to_device(batch, device)
 
+
+
 def build_model(dataset, config: Dict[str, Any], trial=None, hyperparams: Optional[Dict[str, Any]] = None) -> CustomTemporalFusionTransformer:
-    """Buduje model z odpowiednimi hiperparametrami."""
     model_config = ModelConfig(config)
     if trial:
         hyperparams = HyperparamFactory.from_trial(trial, model_config)

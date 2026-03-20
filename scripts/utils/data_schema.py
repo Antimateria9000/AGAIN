@@ -20,6 +20,7 @@ NUMERIC_FEATURES = [
 KNOWN_CATEGORICAL_FEATURES = ["Day_of_Week", "Month"]
 STATIC_CATEGORICALS = ["Sector"]
 DAY_OF_WEEK_CATEGORIES = [str(i) for i in range(7)]
+MONTH_CATEGORIES = [str(i) for i in range(1, 13)]
 LOG_FEATURES = ["Close", "Volume", "MA10", "MA50", "VWAP"]
 SCHEMA_VERSION = 1
 
@@ -38,6 +39,7 @@ def build_schema_payload(
         "known_categoricals": categoricals,
         "static_categoricals": list(STATIC_CATEGORICALS),
         "day_of_week_categories": list(DAY_OF_WEEK_CATEGORIES),
+        "month_categories": list(MONTH_CATEGORIES),
         "log_features": list(LOG_FEATURES),
         "embedding_sizes": config["model"]["embedding_sizes"],
         "sectors": list(config["model"]["sectors"]),
