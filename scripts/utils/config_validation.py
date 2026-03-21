@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import tempfile
 from typing import Any, Dict
 
 
@@ -94,6 +95,7 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     resolved.setdefault("paths", {})
     resolved["paths"].setdefault("benchmark_history_db_path", "data/benchmarks_history.sqlite")
     resolved["paths"].setdefault("model_save_path", str(Path(resolved["paths"]["models_dir"]) / f"{model_name}.pth"))
+    resolved["paths"].setdefault("yfinance_cache_dir", str(Path(tempfile.gettempdir()) / "predictor_bursatil_tft" / "yfinance_cache"))
 
     resolved.setdefault("artifacts", {})
     resolved["artifacts"].setdefault("require_hash_validation", True)

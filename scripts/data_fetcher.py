@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+import tempfile
 
 import pandas as pd
 import yaml
@@ -20,8 +21,22 @@ class DataFetcher:
         self.years = years
         self.tickers_file = Path(self.config["data"]["tickers_file"])
         self.raw_data_path = Path(self.config["data"]["raw_data_path"])
+        self.yfinance_cache_dir = Path(
+            self.config.get("paths", {}).get(
+                "yfinance_cache_dir",
+                Path(tempfile.gettempdir()) / "predictor_bursatil_tft" / "yfinance_cache",
+            )
+        )
         self.extra_days = 50
         self.max_workers = min(8, max(1, int(self.config["training"].get("num_workers", 4))))
+        self._configure_yfinance_cache()
+
+    def _configure_yfinance_cache(self) -> None:
+        self.yfinance_cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            yf.set_tz_cache_location(str(self.yfinance_cache_dir))
+        except Exception as exc:
+            logger.warning("No se ha podido fijar la cache de yfinance en %s: %s", self.yfinance_cache_dir, exc)
 
     def _load_tickers(self, region: str | None = None) -> list[str]:
         with open(self.tickers_file, "r", encoding="utf-8") as handle:

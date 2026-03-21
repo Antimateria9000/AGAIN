@@ -3,7 +3,7 @@ tickers:
     FOR.WA: "Forbo"
     MRC.WA: "Mirbud"
   europe:
-    OR.PA: "L'Oréal"
+    OR.PA: "L'Oreal"
     CS.PA: "AXA"
   usa:
     BA: "Boeing"
@@ -11,5 +11,5 @@ tickers:
   global:
     FMX: "FEMSA"
     TATAMOTORS.NS: "Tata Motors"
-    NSRGY: "Nestlé"
-    SQM: "Sociedad Química y Minera de Chile"
+    NSRGY: "Nestle"
+    SQM: "Sociedad Quimica y Minera de Chile"
