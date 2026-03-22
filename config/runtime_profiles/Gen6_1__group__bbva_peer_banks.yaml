@@ -89,7 +89,7 @@ training_universe:
   notes: Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial
     acotado.
 prediction:
-  years: 10
+  years: 3
   batch_size: 128
   future_dates_mode: approximate_business_days
 validation:
@@ -111,7 +111,7 @@ data:
   benchmark_tickers_file: config/benchmark_tickers.yaml
   train_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\train_processed_df.parquet
   val_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\val_processed_df.parquet
-  years: 10
+  years: 3
   tickers:
   - BBVA.MC
   - SAN.MC
@@ -134,6 +134,7 @@ data_fetch:
   auto_reset_cookie_cache: true
   trust_env_proxies: false
   use_yfinance_sector_lookup: false
+  session_backend: requests
   yfinance_cache_dir: data/cache/yfinance
 paths:
   data_dir: data
@@ -164,33 +165,13 @@ training_run:
   - ISP.MI
   - UCG.MI
   - INGA.AS
-  downloaded_tickers:
-  - BBVA.MC
-  - SAN.MC
-  - CABK.MC
-  - SAB.MC
-  - BKT.MC
-  - BNP.PA
-  - GLE.PA
-  - ISP.MI
-  - UCG.MI
-  - INGA.AS
+  downloaded_tickers: []
   discarded_tickers: []
   discarded_details: {}
-  final_tickers_used:
-  - BBVA.MC
-  - BKT.MC
-  - BNP.PA
-  - CABK.MC
-  - GLE.PA
-  - INGA.AS
-  - ISP.MI
-  - SAB.MC
-  - SAN.MC
-  - UCG.MI
+  final_tickers_used: []
   dropped_after_preprocessing: []
-  trained_at: '2026-03-22T16:47:09'
-  years: 10
+  trained_at: '2026-03-22T20:25:05'
+  years: 3
   prediction_horizon: 60
   label: BBVA + peer set bancario curado
   description: Universo bancario europeo curado para entrenar BBVA frente a peers
