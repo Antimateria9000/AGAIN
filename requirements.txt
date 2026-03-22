@@ -7,6 +7,7 @@ pandas==2.2.3
 pyarrow==19.0.1
 PyYAML==6.0.2
 yfinance==0.2.54
+curl_cffi==0.14.0
 
 torch==2.7.0
 lightning==2.5.1.post0

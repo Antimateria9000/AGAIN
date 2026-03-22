@@ -29,7 +29,7 @@ class DataPreprocessor:
     def __init__(self, config: dict):
         self.config = config
         self.model_name = config["model_name"]
-        self.config_manager = ConfigManager()
+        self.config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
         self.day_of_week_categories = list(DAY_OF_WEEK_CATEGORIES)
         self.month_categories = list(MONTH_CATEGORIES)
         self.train_processed_df_path = Path(config["data"]["train_processed_df_path"])

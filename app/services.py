@@ -9,19 +9,31 @@ from app.benchmark_utils import run_benchmark
 from scripts.data_fetcher import DataFetcher
 from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
+from scripts.utils.model_readiness import assess_model_readiness
 
 
 class ForecastService:
-    def __init__(self, config: dict, years: int):
-        self.config = config
+    def __init__(self, config_manager: ConfigManager, years: int):
+        self.config_manager = config_manager
+        self.config = config_manager.config
         self.years = years
-        self.max_prediction_length = config["model"]["max_prediction_length"]
-        self.fetcher = DataFetcher(ConfigManager(), years)
+        self.max_prediction_length = self.config["model"]["max_prediction_length"]
+        self.fetcher = DataFetcher(config_manager, years)
+
+    def get_model_readiness(self):
+        return assess_model_readiness(self.config)
+
+    def _ensure_model_ready(self):
+        report = self.get_model_readiness()
+        if not report.ready:
+            details = " | ".join(report.issues)
+            raise RuntimeError(f"{report.summary} Detalles: {details}")
 
     def fetch_stock_data(self, ticker, start_date, end_date):
         return self.fetcher.fetch_stock_data(ticker, start_date, end_date)
 
     def predict(self, ticker, start_date, end_date):
+        self._ensure_model_ready()
         new_data = self.fetch_stock_data(ticker, start_date, end_date)
         if new_data.empty:
             raise ValueError(f"No hay datos para {ticker}")
@@ -33,6 +45,7 @@ class ForecastService:
         return ticker_data, original_close, median, lower_bound, upper_bound
 
     def predict_historical(self, ticker, start_date, end_date):
+        self._ensure_model_ready()
         full_data = self.fetch_stock_data(ticker, start_date, end_date)
         if full_data.empty:
             raise ValueError(f"No hay datos para {ticker}")
@@ -56,13 +69,22 @@ class ForecastService:
 
 
 class BenchmarkService:
-    def __init__(self, config: dict, years: int):
-        self.config = config
+    def __init__(self, config_manager: ConfigManager, years: int):
+        self.config_manager = config_manager
+        self.config = config_manager.config
         self.years = years
 
+    def get_model_readiness(self):
+        return assess_model_readiness(self.config)
+
     def run(self, benchmark_tickers, historical_period_days: int):
+        report = self.get_model_readiness()
+        if not report.ready:
+            details = " | ".join(report.issues)
+            raise RuntimeError(f"{report.summary} Detalles: {details}")
         return run_benchmark(
             config=self.config,
+            config_manager=self.config_manager,
             benchmark_tickers=benchmark_tickers,
             years=self.years,
             historical_period_days=historical_period_days,

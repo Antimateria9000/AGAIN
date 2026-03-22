@@ -25,6 +25,22 @@ LOG_FEATURES = ["Close", "Volume", "MA10", "MA50", "VWAP"]
 SCHEMA_VERSION = 1
 
 
+def resolve_embedding_sizes(config: Dict[str, Any]) -> Dict[str, List[int]]:
+    configured = dict(config["model"]["embedding_sizes"])
+    sectors = list(config["model"]["sectors"])
+    minimum_cardinalities = {
+        "Sector": len(sectors) + 1,
+        "Day_of_Week": len(DAY_OF_WEEK_CATEGORIES) + 1,
+        "Month": len(MONTH_CATEGORIES) + 1,
+    }
+
+    resolved: Dict[str, List[int]] = {}
+    for feature, size_pair in configured.items():
+        cardinality, embedding_dim = int(size_pair[0]), int(size_pair[1])
+        resolved[feature] = [max(cardinality, minimum_cardinalities.get(feature, cardinality)), embedding_dim]
+    return resolved
+
+
 def build_schema_payload(
     config: Dict[str, Any],
     numeric_features: Iterable[str] | None = None,
@@ -41,7 +57,7 @@ def build_schema_payload(
         "day_of_week_categories": list(DAY_OF_WEEK_CATEGORIES),
         "month_categories": list(MONTH_CATEGORIES),
         "log_features": list(LOG_FEATURES),
-        "embedding_sizes": config["model"]["embedding_sizes"],
+        "embedding_sizes": resolve_embedding_sizes(config),
         "sectors": list(config["model"]["sectors"]),
         "max_encoder_length": config["model"]["max_encoder_length"],
         "min_encoder_length": config["model"]["min_encoder_length"],

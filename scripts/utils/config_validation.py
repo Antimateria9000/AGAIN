@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-import tempfile
 from typing import Any, Dict
 
 
@@ -75,9 +74,26 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
+def _coerce_numeric_if_possible(value: Any) -> Any:
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return value
+        try:
+            if any(marker in text.lower() for marker in (".", "e")):
+                return float(text)
+            return int(text)
+        except ValueError:
+            return value
+    return value
+
+
 def resolve_tuning_config(config: Dict[str, Any]) -> Dict[str, Any]:
     validate_config_schema(config)
-    return config["model"]["tuning"]
+    raw_tuning = config["model"]["tuning"]
+    return {key: _coerce_numeric_if_possible(value) for key, value in raw_tuning.items()}
 
 
 def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,9 +111,21 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     resolved.setdefault("paths", {})
     resolved["paths"].setdefault("benchmark_history_db_path", "data/benchmarks_history.sqlite")
     resolved["paths"].setdefault("model_save_path", str(Path(resolved["paths"]["models_dir"]) / f"{model_name}.pth"))
-    resolved["paths"].setdefault("yfinance_cache_dir", str(Path(tempfile.gettempdir()) / "predictor_bursatil_tft" / "yfinance_cache"))
 
     resolved.setdefault("artifacts", {})
     resolved["artifacts"].setdefault("require_hash_validation", True)
+
+    resolved.setdefault("data_fetch", {})
+    resolved["data_fetch"].setdefault("max_workers", 1)
+    resolved["data_fetch"].setdefault("retries", 4)
+    resolved["data_fetch"].setdefault("timeout", 10.0)
+    resolved["data_fetch"].setdefault("min_delay", 0.35)
+    resolved["data_fetch"].setdefault("max_intraday_lookback_days", 60)
+    resolved["data_fetch"].setdefault("allow_partial_intraday", False)
+    resolved["data_fetch"].setdefault("repair", True)
+    resolved["data_fetch"].setdefault("auto_reset_cookie_cache", True)
+    resolved["data_fetch"].setdefault("trust_env_proxies", False)
+    resolved["data_fetch"].setdefault("use_yfinance_sector_lookup", False)
+    resolved["data_fetch"].setdefault("yfinance_cache_dir", str(Path(resolved["paths"]["data_dir"]) / "cache" / "yfinance"))
 
     return resolved

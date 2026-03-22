@@ -7,13 +7,14 @@ from pathlib import Path
 import pandas as pd
 import torch
 from pytorch_forecasting import TimeSeriesDataSet
+from pytorch_forecasting.data.encoders import NaNLabelEncoder, TorchNormalizer
 
 from scripts.data_fetcher import DataFetcher
 from scripts.config_manager import ConfigManager
 from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
 from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
-from scripts.utils.data_schema import build_schema_hash
+from scripts.utils.data_schema import KNOWN_CATEGORICAL_FEATURES, NUMERIC_FEATURES, STATIC_CATEGORICALS, TARGET_COLUMN, build_schema_hash
 from scripts.utils.lightning_compat import LIGHTNING_LOGGER_NAME
 from scripts.utils.prediction_utils import (
     accumulate_quantile_price_paths,
@@ -35,6 +36,57 @@ def _validate_schema_metadata(config: dict, metadata: dict | None, artifact_name
         raise ValueError(f"El artefacto {artifact_name} no es compatible con la configuracion actual")
 
 
+def _supports_nan_slot(embedding_sizes: dict | None, feature: str, base_cardinality: int) -> bool:
+    if not embedding_sizes or feature not in embedding_sizes:
+        return True
+    try:
+        configured_cardinality = int(embedding_sizes[feature][0])
+    except (TypeError, ValueError, IndexError):
+        return True
+    return configured_cardinality > base_cardinality
+
+
+def _build_inference_categorical_encoders(config: dict, checkpoint_hyperparams: dict | None = None) -> dict:
+    embedding_sizes = (checkpoint_hyperparams or {}).get("embedding_sizes") if checkpoint_hyperparams else None
+    return {
+        "Sector": NaNLabelEncoder(add_nan=_supports_nan_slot(embedding_sizes, "Sector", len(config["model"]["sectors"]))),
+        "Day_of_Week": NaNLabelEncoder(add_nan=_supports_nan_slot(embedding_sizes, "Day_of_Week", 7)),
+        "Month": NaNLabelEncoder(add_nan=_supports_nan_slot(embedding_sizes, "Month", 12)),
+    }
+
+
+def _build_reference_dataset_from_input(
+    config: dict,
+    new_data: pd.DataFrame,
+    normalizers: dict,
+    ticker: str,
+    checkpoint_hyperparams: dict | None = None,
+) -> TimeSeriesDataSet:
+    logger.warning(
+        "No se ha podido usar el artefacto %s. Se reconstruira un TimeSeriesDataSet de referencia en memoria.",
+        config["data"]["processed_data_path"],
+    )
+    processed_df, _ = preprocess_data(config, new_data.copy(), ticker, normalizers)
+    available_numeric_features = [feature for feature in NUMERIC_FEATURES if feature in processed_df.columns]
+
+    return TimeSeriesDataSet(
+        processed_df,
+        time_idx="time_idx",
+        target=TARGET_COLUMN,
+        group_ids=["group_id"],
+        min_encoder_length=config["model"]["min_encoder_length"],
+        max_encoder_length=config["model"]["max_encoder_length"],
+        max_prediction_length=config["model"]["max_prediction_length"],
+        static_categoricals=STATIC_CATEGORICALS,
+        time_varying_known_categoricals=KNOWN_CATEGORICAL_FEATURES,
+        time_varying_unknown_reals=available_numeric_features,
+        target_normalizer=normalizers.get(TARGET_COLUMN, TorchNormalizer()),
+        allow_missing_timesteps=True,
+        add_encoder_length=False,
+        categorical_encoders=_build_inference_categorical_encoders(config, checkpoint_hyperparams),
+    )
+
+
 def load_data_and_model(
     config,
     ticker,
@@ -47,9 +99,10 @@ def load_data_and_model(
     start_time = time.time()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Inferencia en dispositivo: {device}")
+    config_path = config.get("_meta", {}).get("config_path")
 
     if raw_data is None:
-        fetcher = DataFetcher(ConfigManager(), years)
+        fetcher = DataFetcher(ConfigManager(config_path), years)
         start_date = pd.Timestamp(datetime.now()).tz_localize(None) - pd.Timedelta(days=years * 365 + trim_days)
         new_data = fetcher.fetch_stock_data(ticker, start_date, datetime.now().replace(tzinfo=None))
         if new_data.empty:
@@ -63,16 +116,7 @@ def load_data_and_model(
     if temp_raw_data_path:
         new_data.to_csv(temp_raw_data_path, index=False)
 
-    dataset_path = Path(config['data']['processed_data_path'])
-    ensure_relative_to(dataset_path, Path(config['paths']['data_dir']))
-    verify_checksum(dataset_path, required=config['artifacts']['require_hash_validation'])
-    dataset_metadata = read_metadata(dataset_path)
-    _validate_schema_metadata(config, dataset_metadata, str(dataset_path))
-    dataset = load_trusted_torch_artifact(dataset_path, trusted_types=[TimeSeriesDataSet])
-    if not isinstance(dataset, TimeSeriesDataSet):
-        raise TypeError(f"El artefacto {dataset_path} no contiene un TimeSeriesDataSet valido")
-
-    config_manager = ConfigManager()
+    config_manager = ConfigManager(config_path)
     model_name = config['model_name']
     normalizers = config_manager.load_normalizers(model_name, required=True)
     normalizers_metadata = config_manager.get_last_normalizers_metadata()
@@ -90,6 +134,19 @@ def load_data_and_model(
     hyperparams = checkpoint['hyperparams']
     if 'hidden_continuous_size' not in hyperparams:
         hyperparams['hidden_continuous_size'] = config['model']['hidden_size'] // 2
+
+    dataset_path = Path(config['data']['processed_data_path'])
+    ensure_relative_to(dataset_path, Path(config['paths']['data_dir']))
+    try:
+        verify_checksum(dataset_path, required=config['artifacts']['require_hash_validation'])
+        dataset_metadata = read_metadata(dataset_path)
+        _validate_schema_metadata(config, dataset_metadata, str(dataset_path))
+        dataset = load_trusted_torch_artifact(dataset_path, trusted_types=[TimeSeriesDataSet])
+        if not isinstance(dataset, TimeSeriesDataSet):
+            raise TypeError(f"El artefacto {dataset_path} no contiene un TimeSeriesDataSet valido")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        logger.warning("No se usara el dataset persistido %s: %s", dataset_path, exc)
+        dataset = _build_reference_dataset_from_input(config, new_data, normalizers, ticker, checkpoint_hyperparams=hyperparams)
 
     model = build_model(dataset, config, hyperparams=hyperparams)
     model.load_state_dict(checkpoint['state_dict'])
@@ -149,7 +206,7 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
     target_normalizer = dataset.target_normalizer
     pred_array = inverse_transform_if_available(target_normalizer, torch.from_numpy(pred_array))
 
-    config_manager = ConfigManager()
+    config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
     normalizers = config_manager.load_normalizers(config['model_name'], required=True)
     close_normalizer = normalizers.get('Close', target_normalizer)
     last_close_denorm = denormalize_logged_close(close_normalizer, float(ticker_data['Close'].iloc[-1]))

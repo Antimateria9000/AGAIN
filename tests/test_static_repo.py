@@ -1,6 +1,10 @@
 import unittest
 from pathlib import Path
 
+import yaml
+
+from scripts.utils.config_validation import resolve_tuning_config
+
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_PARTS = {".venv", ".git", ".codex_pycache", "__pycache__"}
 
@@ -88,10 +92,18 @@ class StaticRepoTests(unittest.TestCase):
             ROOT / "scripts" / "train.py",
             ROOT / "scripts" / "utils" / "artifact_utils.py",
             ROOT / "scripts" / "utils" / "lightning_compat.py",
+            ROOT / "scripts" / "utils" / "yfinance_provider.py",
         ]
         for path in files_to_check:
             source = path.read_text(encoding="utf-8")
             compile(source, str(path), "exec")
+
+    def test_tuning_config_convierte_notacion_cientifica_a_numeros(self):
+        config = yaml.safe_load((ROOT / "config" / "config.yaml").read_text(encoding="utf-8"))
+        tuning = resolve_tuning_config(config)
+        self.assertIsInstance(tuning["min_learning_rate"], float)
+        self.assertIsInstance(tuning["max_learning_rate"], float)
+        self.assertLessEqual(tuning["min_learning_rate"], tuning["max_learning_rate"])
 
 
 if __name__ == "__main__":

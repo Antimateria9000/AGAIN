@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-import tempfile
 
 import pandas as pd
 import yaml
 import yfinance as yf
 
 from .runtime_config import ConfigManager
+from .utils.yfinance_provider import FetchResult, YFinanceProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,22 +20,131 @@ class DataFetcher:
         self.years = years
         self.tickers_file = Path(self.config["data"]["tickers_file"])
         self.raw_data_path = Path(self.config["data"]["raw_data_path"])
-        self.yfinance_cache_dir = Path(
-            self.config.get("paths", {}).get(
-                "yfinance_cache_dir",
-                Path(tempfile.gettempdir()) / "predictor_bursatil_tft" / "yfinance_cache",
-            )
-        )
+        provider_config = self.config.get("data_fetch", {})
+        cache_dir_value = provider_config.get("yfinance_cache_dir")
+        self.yfinance_cache_dir = Path(cache_dir_value) if cache_dir_value else None
         self.extra_days = 50
-        self.max_workers = min(8, max(1, int(self.config["training"].get("num_workers", 4))))
+        self.max_workers = min(8, max(1, int(provider_config.get("max_workers", 1))))
+        self.enable_sector_lookup = bool(provider_config.get("use_yfinance_sector_lookup", False))
+        self._sector_cache: dict[str, str] = {}
         self._configure_yfinance_cache()
+        self.provider = YFinanceProvider(
+            max_workers=self.max_workers,
+            retries=int(provider_config.get("retries", 4)),
+            timeout=float(provider_config.get("timeout", 10.0)),
+            min_delay=float(provider_config.get("min_delay", 0.35)),
+            max_intraday_lookback_days=int(provider_config.get("max_intraday_lookback_days", 60)),
+            allow_partial_intraday=bool(provider_config.get("allow_partial_intraday", False)),
+            cache_dir=self.yfinance_cache_dir,
+            repair=bool(provider_config.get("repair", True)),
+            auto_reset_cookie_cache=bool(provider_config.get("auto_reset_cookie_cache", True)),
+            trust_env_proxies=bool(provider_config.get("trust_env_proxies", False)),
+        )
 
     def _configure_yfinance_cache(self) -> None:
+        if self.yfinance_cache_dir is None:
+            return
         self.yfinance_cache_dir.mkdir(parents=True, exist_ok=True)
         try:
             yf.set_tz_cache_location(str(self.yfinance_cache_dir))
         except Exception as exc:
             logger.warning("No se ha podido fijar la cache de yfinance en %s: %s", self.yfinance_cache_dir, exc)
+
+    def _normalize_sector(self, sector: str | None) -> str:
+        if sector is None or pd.isna(sector):
+            sector_value = "Unknown"
+        else:
+            sector_value = str(sector).strip() or "Unknown"
+        if sector_value not in self.config["model"]["sectors"]:
+            sector_value = "Unknown"
+        return sector_value
+
+    def _resolve_sector(self, ticker: str) -> str:
+        if ticker in self._sector_cache:
+            return self._sector_cache[ticker]
+
+        if self.raw_data_path.exists():
+            try:
+                cached = pd.read_csv(self.raw_data_path, usecols=["Ticker", "Sector"])
+                cached = cached[cached["Ticker"].astype(str).str.upper() == ticker]
+                if not cached.empty:
+                    sector_from_cache = self._normalize_sector(cached["Sector"].iloc[0])
+                    self._sector_cache[ticker] = sector_from_cache
+                    return sector_from_cache
+            except Exception as exc:
+                logger.debug("No se ha podido reutilizar el sector desde la cache local para %s: %s", ticker, exc)
+
+        if not self.enable_sector_lookup:
+            self._sector_cache[ticker] = "Unknown"
+            return "Unknown"
+
+        sector = "Unknown"
+        try:
+            info = yf.Ticker(ticker).info or {}
+            sector = self._normalize_sector(info.get("sector"))
+        except Exception as exc:
+            logger.warning("No se ha podido resolver el sector de %s. Se usara Unknown. Detalle: %s", ticker, exc)
+
+        self._sector_cache[ticker] = sector
+        return sector
+
+    @staticmethod
+    def _empty_output_frame() -> pd.DataFrame:
+        return pd.DataFrame(columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"])
+
+    def _fallback_from_local_raw_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        if not self.raw_data_path.exists():
+            return self._empty_output_frame()
+
+        try:
+            cached = pd.read_csv(self.raw_data_path, parse_dates=["Date"])
+        except Exception as exc:
+            logger.warning("No se ha podido leer la cache local %s: %s", self.raw_data_path, exc)
+            return self._empty_output_frame()
+
+        required = {"Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"}
+        if not required.issubset(cached.columns):
+            logger.warning("La cache local %s no tiene el esquema esperado y no se puede usar como fallback", self.raw_data_path)
+            return self._empty_output_frame()
+
+        cached["Date"] = pd.to_datetime(cached["Date"], utc=True, errors="coerce")
+        cached = cached.dropna(subset=["Date"])
+        cached["Date"] = cached["Date"].dt.tz_localize(None)
+        start_ts = pd.Timestamp(self._normalize_date(start_date))
+        end_ts = pd.Timestamp(self._normalize_date(end_date))
+        filtered = cached[(cached["Ticker"] == ticker) & (cached["Date"] >= start_ts) & (cached["Date"] < end_ts)].copy()
+        if filtered.empty:
+            return self._empty_output_frame()
+
+        logger.warning("Se usaran datos locales en cache para %s desde %s", ticker, self.raw_data_path)
+        return filtered[["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"]].reset_index(drop=True)
+
+    def _prepare_output_frame(self, ticker: str, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame is None or frame.empty:
+            return self._empty_output_frame()
+
+        out = frame.copy()
+        if "Date" not in out.columns and isinstance(out.index, pd.DatetimeIndex):
+            out = out.reset_index()
+            first_column = out.columns[0]
+            if first_column != "Date":
+                out = out.rename(columns={first_column: "Date"})
+
+        if {"Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"}.issubset(out.columns):
+            out["Date"] = pd.to_datetime(out["Date"], utc=True, errors="coerce")
+            out = out.dropna(subset=["Date"])
+            out["Date"] = out["Date"].dt.tz_localize(None)
+            out["Ticker"] = out["Ticker"].astype(str).str.upper()
+            out["Sector"] = out["Sector"].map(self._normalize_sector)
+            return out[["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"]].reset_index(drop=True)
+
+        out["Date"] = pd.to_datetime(out["Date"], utc=True, errors="coerce")
+        out = out.dropna(subset=["Date"])
+        out["Date"] = out["Date"].dt.tz_localize(None)
+        out["Ticker"] = ticker
+        out["Sector"] = self._resolve_sector(ticker)
+        required_cols = ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"]
+        return out[required_cols].reset_index(drop=True)
 
     def _load_tickers(self, region: str | None = None) -> list[str]:
         with open(self.tickers_file, "r", encoding="utf-8") as handle:
@@ -56,60 +164,83 @@ class DataFetcher:
         return value
 
     def fetch_stock_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        start_date = self._normalize_date(start_date)
+        end_date = self._normalize_date(end_date)
+        adjusted_start_date = start_date - timedelta(days=self.extra_days)
+        ticker = str(ticker).strip().upper()
+
         try:
-            start_date = self._normalize_date(start_date)
-            end_date = self._normalize_date(end_date)
-            adjusted_start_date = start_date - timedelta(days=self.extra_days)
+            result = self.provider.get_history_bundle(
+                symbols=ticker,
+                start=adjusted_start_date,
+                end=end_date,
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+            if not isinstance(result, FetchResult):
+                logger.error("El provider devolvio un tipo inesperado para %s", ticker)
+                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
 
-            stock = yf.Ticker(ticker)
-            info = stock.info or {}
-            first_trade_date = info.get("firstTradeDateEpochUtc")
-            if first_trade_date:
-                first_trade_timestamp = pd.to_datetime(first_trade_date / 1000, unit="s", utc=True).tz_localize(None)
-                if first_trade_timestamp > adjusted_start_date:
-                    adjusted_start_date = first_trade_timestamp
-
-            df = stock.history(start=adjusted_start_date, end=end_date, repair=True, auto_adjust=True)
+            df = result.data
             if df.empty:
-                logger.warning("No hay datos para %s", ticker)
-                return pd.DataFrame()
+                logger.warning("No hay datos descargados para %s", ticker)
+                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
 
-            df = df.reset_index()
-            df["Date"] = pd.to_datetime(df["Date"], utc=True).dt.tz_localize(None)
-            df.columns = [col.replace(" ", "_") for col in df.columns]
-            sector = info.get("sector", "Unknown")
-            if sector not in self.config["model"]["sectors"]:
-                sector = "Unknown"
-            df["Ticker"] = ticker
-            df["Sector"] = sector
-            df = df[df["Date"] >= pd.Timestamp(start_date)].reset_index(drop=True)
-            required_cols = ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"]
-            return df[required_cols]
+            prepared = self._prepare_output_frame(ticker, df)
+            prepared = prepared[prepared["Date"] >= pd.Timestamp(start_date)].reset_index(drop=True)
+            if prepared.empty:
+                logger.warning("No hay datos utiles para %s tras filtrar el rango solicitado", ticker)
+                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
+            return prepared
         except Exception as exc:
             logger.error("Error al descargar %s: %s", ticker, exc)
-            return pd.DataFrame()
+            return self._fallback_from_local_raw_data(ticker, start_date, end_date)
 
     def fetch_many_stocks(self, tickers: list[str], start_date: datetime, end_date: datetime) -> pd.DataFrame:
         if not tickers:
             return pd.DataFrame()
 
         results = []
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_map = {
-                executor.submit(self.fetch_stock_data, ticker, start_date, end_date): ticker
-                for ticker in tickers
-            }
-            for future in as_completed(future_map):
-                ticker = future_map[future]
-                try:
-                    result = future.result()
-                except Exception as exc:
-                    logger.error("Error al resolver %s: %s", ticker, exc)
-                    result = pd.DataFrame()
-                if result.empty:
+        start_date = self._normalize_date(start_date)
+        end_date = self._normalize_date(end_date)
+        adjusted_start_date = start_date - timedelta(days=self.extra_days)
+        normalized_tickers = [str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()]
+
+        try:
+            bundle = self.provider.get_history_bundle(
+                symbols=normalized_tickers,
+                start=adjusted_start_date,
+                end=end_date,
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+        except Exception as exc:
+            logger.error("Fallo general en la descarga por lotes: %s", exc)
+            bundle = {}
+
+        for ticker in normalized_tickers:
+            result = bundle.get(ticker) if isinstance(bundle, dict) else None
+            frame = result.data if isinstance(result, FetchResult) else pd.DataFrame()
+            if frame.empty:
+                fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
+                if fallback.empty:
                     logger.warning("Se omite %s por falta de datos", ticker)
                     continue
-                results.append(result)
+                results.append(fallback)
+                continue
+
+            prepared = self._prepare_output_frame(ticker, frame)
+            prepared = prepared[prepared["Date"] >= pd.Timestamp(start_date)].reset_index(drop=True)
+            if prepared.empty:
+                fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
+                if fallback.empty:
+                    logger.warning("Se omite %s por falta de datos utiles", ticker)
+                    continue
+                results.append(fallback)
+                continue
+            results.append(prepared)
 
         if not results:
             return pd.DataFrame()

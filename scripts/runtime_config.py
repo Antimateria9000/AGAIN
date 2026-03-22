@@ -24,6 +24,8 @@ class ConfigManager:
                 config = yaml.safe_load(f) or {}
             validate_config_schema(config)
             config = apply_runtime_defaults(config)
+            config.setdefault("_meta", {})
+            config["_meta"]["config_path"] = str(self.config_path)
             logger.info(f"Configuracion cargada desde {self.config_path}")
             return config
         except FileNotFoundError:

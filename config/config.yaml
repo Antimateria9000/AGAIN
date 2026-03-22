@@ -80,6 +80,19 @@ data:
   train_processed_df_path: data/train/train_processed_df.parquet
   val_processed_df_path: data/train/val_processed_df.parquet
 
+data_fetch:
+  max_workers: 1
+  retries: 4
+  timeout: 10.0
+  min_delay: 0.35
+  max_intraday_lookback_days: 60
+  allow_partial_intraday: false
+  repair: true
+  auto_reset_cookie_cache: true
+  trust_env_proxies: false
+  use_yfinance_sector_lookup: false
+  yfinance_cache_dir: data/cache/yfinance
+
 paths:
   data_dir: data
   models_dir: models

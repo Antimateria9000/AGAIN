@@ -6,6 +6,7 @@ from typing import Any, Dict
 from pytorch_forecasting.metrics import MAE, QuantileLoss
 
 from scripts.utils.config_validation import resolve_tuning_config
+from scripts.utils.data_schema import resolve_embedding_sizes
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ class ModelConfig:
         self.config = config
         self.use_quantile_loss = config["model"].get("use_quantile_loss", False)
         self.quantiles = config["model"].get("quantiles", [0.1, 0.5, 0.9]) if self.use_quantile_loss else None
-        self.embedding_sizes = config["model"]["embedding_sizes"]
+        self.embedding_sizes = resolve_embedding_sizes(config)
         self.default_hyperparams = self._get_default_hyperparams()
 
     def _get_default_hyperparams(self) -> Dict[str, Any]:

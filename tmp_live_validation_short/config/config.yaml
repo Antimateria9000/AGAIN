@@ -1,0 +1,123 @@
+model_name: live_smoke_short
+model:
+  max_prediction_length: 60
+  min_encoder_length: 50
+  max_encoder_length: 180
+  hidden_size: 128
+  attention_head_size: 4
+  dropout: 0.3
+  learning_rate: 0.001
+  lstm_layers: 2
+  use_quantile_loss: true
+  quantiles:
+  - 0.1
+  - 0.5
+  - 0.9
+  embedding_sizes:
+    Sector:
+    - 12
+    - 6
+    Day_of_Week:
+    - 7
+    - 4
+    Month:
+    - 12
+    - 6
+  sectors:
+  - Technology
+  - Healthcare
+  - Financials
+  - Consumer Discretionary
+  - Consumer Staples
+  - Energy
+  - Utilities
+  - Industrials
+  - Materials
+  - Communication Services
+  - Real Estate
+  - Unknown
+  tuning:
+    min_hidden_size: 64
+    max_hidden_size: 128
+    min_hidden_continuous_size: 64
+    max_hidden_continuous_size: 128
+    min_lstm_layers: 1
+    max_lstm_layers: 2
+    min_attention_head_size: 2
+    max_attention_head_size: 4
+    min_dropout: 0.1
+    max_dropout: 0.3
+    min_learning_rate: 1e-5
+    max_learning_rate: 1e-3
+training:
+  seed: 42
+  max_epochs: 1
+  optuna_trials: 1
+  num_workers: 0
+  prefetch_factor: 2
+  early_stopping_patience: 10
+  reduce_lr_patience: 3
+  reduce_lr_factor: 0.6
+  weight_decay: 0.13
+  batch_size: 16
+  auto_batch_size: false
+  batch_size_candidates:
+  - 256
+  - 192
+  - 128
+  - 96
+  - 64
+  - 48
+  - 32
+  - 24
+  - 16
+  - 8
+  - 4
+  - 2
+  - 1
+  max_vram_usage: 0.8
+  accelerator: auto
+  precision: auto
+prediction:
+  years: 3
+  batch_size: 128
+  future_dates_mode: approximate_business_days
+validation:
+  debug: false
+  enable_detailed_validation: false
+  max_validation_batches_to_log: 2
+  save_plots: true
+  max_plots_per_epoch: 3
+data:
+  valid_regions:
+  - poland
+  - europe
+  - usa
+  - global
+  - all
+  raw_data_path: tmp_live_validation_short/data/stock_data.csv
+  processed_data_path: tmp_live_validation_short/data/train/processed_dataset.pt
+  tickers_file: tmp_live_validation_short/config/tickers.yaml
+  benchmark_tickers_file: tmp_live_validation_short/config/benchmark_tickers.yaml
+  train_processed_df_path: tmp_live_validation_short/data/train/train_processed_df.parquet
+  val_processed_df_path: tmp_live_validation_short/data/train/val_processed_df.parquet
+data_fetch:
+  max_workers: 1
+  retries: 4
+  timeout: 10.0
+  min_delay: 0.35
+  max_intraday_lookback_days: 60
+  allow_partial_intraday: false
+  repair: true
+  auto_reset_cookie_cache: true
+  use_yfinance_sector_lookup: false
+  yfinance_cache_dir: data/cache/yfinance
+paths:
+  data_dir: tmp_live_validation_short/data
+  models_dir: tmp_live_validation_short/models
+  normalizers_dir: tmp_live_validation_short/models/normalizers
+  config_dir: tmp_live_validation_short/config
+  logs_dir: tmp_live_validation_short/logs
+  benchmark_history_db_path: tmp_live_validation_short/data/benchmarks_history.sqlite
+artifacts:
+  require_hash_validation: true

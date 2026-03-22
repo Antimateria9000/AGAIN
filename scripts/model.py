@@ -37,7 +37,7 @@ class CustomTemporalFusionTransformer(LightningModule):
         self.hyperparams = hyperparams if hyperparams else self.model_config.default_hyperparams
         self.model_name = config["model_name"]
         self.dataset = dataset
-        self.config_manager = ConfigManager()
+        self.config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
         self.batch_size = int(config["training"]["batch_size"])
         self._load_normalizers()
         self._initialize_model(dataset)

@@ -143,14 +143,22 @@ def build_metrics_dataframe(all_results: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_benchmark(config: dict, benchmark_tickers: list[str], years: int, historical_period_days: int = 365, run_timestamp: datetime | None = None):
+def run_benchmark(
+    config: dict,
+    benchmark_tickers: list[str],
+    years: int,
+    historical_period_days: int = 365,
+    run_timestamp: datetime | None = None,
+    config_manager: ConfigManager | None = None,
+):
     all_results: dict[str, dict] = {}
     max_prediction_length = config["model"]["max_prediction_length"]
     benchmark_timestamp = run_timestamp or datetime.now().replace(tzinfo=None)
     start_date = pd.Timestamp(benchmark_timestamp).tz_localize(None) - pd.Timedelta(days=years * 365)
     end_date = benchmark_timestamp
 
-    fetcher = DataFetcher(ConfigManager(), config["prediction"]["years"])
+    runtime_config_manager = config_manager or ConfigManager()
+    fetcher = DataFetcher(runtime_config_manager, config["prediction"]["years"])
     combined_data = fetcher.fetch_many_stocks(benchmark_tickers, start_date, end_date)
     if combined_data.empty:
         raise ValueError("No se ha podido descargar ningun ticker del benchmark")

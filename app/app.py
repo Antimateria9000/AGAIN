@@ -18,6 +18,21 @@ logger = logging.getLogger(__name__)
 logging.getLogger("streamlit.watcher.local_sources_watcher").setLevel(logging.ERROR)
 
 
+@st.cache_resource(show_spinner=False)
+def _get_config_manager() -> ConfigManager:
+    return ConfigManager()
+
+
+@st.cache_resource(show_spinner=False)
+def _get_forecast_service(years: int) -> ForecastService:
+    return ForecastService(_get_config_manager(), years)
+
+
+@st.cache_resource(show_spinner=False)
+def _get_benchmark_service(years: int) -> BenchmarkService:
+    return BenchmarkService(_get_config_manager(), years)
+
+
 def _select_ticker_input(ticker_options: dict[str, str], default_ticker: str) -> str:
     labels = ["Escribir manualmente"] + list(ticker_options.values())
     default_index = 0 if default_ticker not in ticker_options else list(ticker_options.values()).index(ticker_options[default_ticker]) + 1
@@ -32,6 +47,15 @@ def _select_ticker_input(ticker_options: dict[str, str], default_ticker: str) ->
 
 
 def _render_prediction_view(config: dict, forecast_service: ForecastService, years: int):
+    readiness = forecast_service.get_model_readiness()
+    if not readiness.ready:
+        st.error(readiness.summary)
+        st.write("Problemas detectados:")
+        for issue in readiness.issues:
+            st.write(f"- {issue}")
+        st.info("Antes de predecir, ejecuta preparar_modelo.bat para generar artefactos canonicos del modelo.")
+        return
+
     ticker_options = load_tickers_and_names(config)
     default_ticker = "AAPL" if "AAPL" in ticker_options else (list(ticker_options.keys())[0] if ticker_options else "AAPL")
     ticker_input = _select_ticker_input(ticker_options, default_ticker)
@@ -52,6 +76,15 @@ def _render_prediction_view(config: dict, forecast_service: ForecastService, yea
 
 
 def _render_historical_view(config: dict, forecast_service: ForecastService, years: int):
+    readiness = forecast_service.get_model_readiness()
+    if not readiness.ready:
+        st.error(readiness.summary)
+        st.write("Problemas detectados:")
+        for issue in readiness.issues:
+            st.write(f"- {issue}")
+        st.info("Antes de comparar con historico, ejecuta preparar_modelo.bat para generar artefactos canonicos del modelo.")
+        return
+
     ticker_options = load_tickers_and_names(config)
     default_ticker = "AAPL" if "AAPL" in ticker_options else (list(ticker_options.keys())[0] if ticker_options else "AAPL")
     ticker_input = _select_ticker_input(ticker_options, default_ticker)
@@ -122,6 +155,15 @@ def _render_benchmark_history(config: dict, benchmark_tickers: list[str]):
 
 
 def _render_benchmark_view(config: dict, benchmark_service: BenchmarkService, benchmark_tickers: list[str]):
+    readiness = benchmark_service.get_model_readiness()
+    if not readiness.ready:
+        st.error(readiness.summary)
+        st.write("Problemas detectados:")
+        for issue in readiness.issues:
+            st.write(f"- {issue}")
+        st.info("Antes de ejecutar el benchmark, ejecuta preparar_modelo.bat para generar artefactos canonicos del modelo.")
+        return
+
     st.write("Tickers del benchmark:", " ".join(benchmark_tickers))
     if st.button("Generar benchmark"):
         with st.spinner("Generando benchmark..."):
@@ -144,7 +186,8 @@ def main():
     st.set_page_config(page_title="Predictor bursatil", layout="wide")
     st.title("Predictor bursatil")
 
-    config = ConfigManager().config
+    config_manager = _get_config_manager()
+    config = config_manager.config
     years = config["prediction"]["years"]
     if "historical_period_days" not in st.session_state:
         st.session_state.historical_period_days = 365
@@ -163,8 +206,13 @@ def main():
     )
     st.session_state.historical_period_days = historical_period_options[selected_period]
 
-    forecast_service = ForecastService(config, years)
-    benchmark_service = BenchmarkService(config, years)
+    forecast_service = _get_forecast_service(years)
+    benchmark_service = _get_benchmark_service(years)
+    readiness = forecast_service.get_model_readiness()
+    if readiness.ready:
+        st.sidebar.success("Modelo preparado para inferencia")
+    else:
+        st.sidebar.error("Modelo no preparado")
     benchmark_tickers = load_benchmark_tickers(config)
     page = st.sidebar.selectbox("Seccion", ["Prediccion futura", "Comparacion historica", "Benchmark"])
 

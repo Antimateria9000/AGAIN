@@ -10,11 +10,18 @@ os.environ.setdefault("MPLCONFIGDIR", str(MPL_CACHE_DIR))
 try:
     import pandas as pd
     import torch
+    from pytorch_forecasting.data.encoders import NaNLabelEncoder
 
     from scripts.preprocessor import DataPreprocessor
-    from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
+    from scripts.prediction_engine import (
+        _build_inference_categorical_encoders,
+        generate_predictions,
+        load_data_and_model,
+        preprocess_data,
+    )
     from scripts.runtime_config import ConfigManager
     from scripts.train import train_model
+    from scripts.utils.model_readiness import assess_model_readiness
 
     DEPS_AVAILABLE = True
 except Exception:
@@ -139,6 +146,8 @@ artifacts:
         dataset = DataPreprocessor(self.config).process_data(mode="train", df=df)
         model = train_model(dataset, self.config, use_optuna=False, continue_training=False)
         self.assertIsNotNone(model)
+        readiness = assess_model_readiness(self.config)
+        self.assertTrue(readiness.ready, readiness.issues)
 
         ticker = "AAPL"
         raw_slice = df[df["Ticker"] == ticker].copy()
@@ -150,6 +159,60 @@ artifacts:
         self.assertEqual(len(lower_bound), len(median))
         self.assertEqual(len(upper_bound), len(median))
         self.assertFalse(pd.isna(original_close.iloc[-1]))
+
+    def test_load_data_and_model_reconstruye_dataset_si_falta_el_artefacto(self):
+        df = self._build_synthetic_df()
+        dataset = DataPreprocessor(self.config).process_data(mode="train", df=df)
+        model = train_model(dataset, self.config, use_optuna=False, continue_training=False)
+        self.assertIsNotNone(model)
+
+        processed_path = Path(self.config["data"]["processed_data_path"])
+        checksum_path = processed_path.with_name(f"{processed_path.name}.sha256")
+        metadata_path = processed_path.with_name(f"{processed_path.name}.meta.json")
+        if processed_path.exists():
+            processed_path.unlink()
+        if checksum_path.exists():
+            checksum_path.unlink()
+        if metadata_path.exists():
+            metadata_path.unlink()
+
+        ticker = "AAPL"
+        raw_slice = df[df["Ticker"] == ticker].copy()
+        _, dataset_loaded, normalizers, model_loaded = load_data_and_model(self.config, ticker, raw_data=raw_slice)
+        processed_df, original_close = preprocess_data(self.config, raw_slice, ticker, normalizers)
+        median, lower_bound, upper_bound = generate_predictions(self.config, dataset_loaded, model_loaded, processed_df)
+
+        self.assertEqual(len(median), self.config["model"]["max_prediction_length"])
+        self.assertEqual(len(lower_bound), len(median))
+        self.assertEqual(len(upper_bound), len(median))
+        self.assertFalse(pd.isna(original_close.iloc[-1]))
+
+    def test_encoders_legacy_respetan_cardinalidades_sin_slot_nan_extra(self):
+        legacy_hyperparams = {
+            "embedding_sizes": {
+                "Sector": [2, 2],
+                "Day_of_Week": [7, 4],
+                "Month": [12, 6],
+            }
+        }
+        encoders = _build_inference_categorical_encoders(self.config, legacy_hyperparams)
+
+        self.assertIsInstance(encoders["Day_of_Week"], NaNLabelEncoder)
+        self.assertFalse(encoders["Day_of_Week"].add_nan)
+        self.assertFalse(encoders["Month"].add_nan)
+
+        weekday_values = pd.Series([str(index) for index in range(7)])
+        month_values = pd.Series([str(index) for index in range(1, 13)])
+        weekday_encoded = encoders["Day_of_Week"].fit_transform(weekday_values)
+        month_encoded = encoders["Month"].fit_transform(month_values)
+
+        self.assertEqual(int(weekday_encoded.max()), 6)
+        self.assertEqual(int(month_encoded.max()), 11)
+
+    def test_model_readiness_detecta_artefactos_incompletos(self):
+        report = assess_model_readiness(self.config)
+        self.assertFalse(report.ready)
+        self.assertTrue(any("dataset procesado" in issue.lower() for issue in report.issues))
 
 
 if __name__ == "__main__":
