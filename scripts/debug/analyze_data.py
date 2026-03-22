@@ -11,7 +11,7 @@ import seaborn as sns
 from scripts.config_manager import ConfigManager
 from scripts.data_fetcher import DataFetcher
 from scripts.preprocessor import DataPreprocessor
-from scripts.utils.data_schema import NUMERIC_FEATURES
+from scripts.utils.data_schema import NUMERIC_FEATURES, TARGET_COLUMN
 from scripts.utils.feature_engineer import FeatureEngineer
 
 logging.basicConfig(
@@ -33,7 +33,8 @@ class DataAnalyzer:
         self.feature_engineer = FeatureEngineer()
         self.output_dir = Path(self.config["paths"]["logs_dir"]) / "debug"
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.numeric_features = [feature for feature in NUMERIC_FEATURES if feature != "Relative_Returns"] + ["Relative_Returns"]
+        self.normalized_numeric_features = list(NUMERIC_FEATURES)
+        self.analysis_features = [*NUMERIC_FEATURES, TARGET_COLUMN]
 
     def fetch_data(self, tickers: list[str]) -> pd.DataFrame:
         end_date = datetime.now().replace(tzinfo=None)
@@ -61,7 +62,7 @@ class DataAnalyzer:
         normalizers = self.config_manager.load_normalizers(self.model_name)
         df_normalized = df_processed.copy()
 
-        for feature in self.numeric_features:
+        for feature in self.normalized_numeric_features:
             if feature in df_normalized.columns and feature in normalizers:
                 try:
                     df_normalized[feature] = normalizers[feature].transform(df_normalized[feature].values)
@@ -69,11 +70,15 @@ class DataAnalyzer:
                     logger.error("Error al normalizar %s: %s", feature, exc)
 
         stats = []
-        for feature in self.numeric_features:
+        for feature in self.analysis_features:
             if feature not in df_processed.columns:
                 continue
             raw = df_processed[feature].dropna()
-            normalized = df_normalized[feature].dropna() if feature in df_normalized.columns else pd.Series(dtype=float)
+            normalized = (
+                df_normalized[feature].dropna()
+                if feature in self.normalized_numeric_features and feature in df_normalized.columns
+                else pd.Series(dtype=float)
+            )
             if not raw.empty:
                 self.plot_feature_distribution(raw, feature, normalized=False)
             if not normalized.empty:
@@ -100,7 +105,7 @@ class DataAnalyzer:
         stats_df.to_csv(stats_path, index=False)
         logger.info("Estadisticas guardadas en %s", stats_path)
 
-        existing_numeric_features = [feature for feature in self.numeric_features if feature in df_processed.columns]
+        existing_numeric_features = [feature for feature in self.analysis_features if feature in df_processed.columns]
         numeric_df = df_processed[existing_numeric_features].dropna()
         if not numeric_df.empty:
             correlation_matrix = numeric_df.corr()
