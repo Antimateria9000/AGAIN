@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from pytorch_forecasting import TimeSeriesDataSet
@@ -25,6 +26,7 @@ from scripts.utils.lightning_compat import LIGHTNING_LOGGER_NAME
 from scripts.utils.prediction_utils import (
     accumulate_quantile_price_paths,
     denormalize_logged_close,
+    estimate_future_business_dates,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,136 @@ def _build_reference_dataset_from_input(
         add_encoder_length=False,
         categorical_encoders=_build_inference_categorical_encoders(config, checkpoint_hyperparams),
     )
+
+
+def _extract_prediction_array(predictions) -> np.ndarray:
+    pred_array = predictions.output if hasattr(predictions, "output") else predictions
+    if isinstance(pred_array, torch.Tensor):
+        pred_array = pred_array.detach().float().cpu().numpy()
+    pred_array = np.asarray(pred_array, dtype=float)
+    if pred_array.ndim != 3:
+        raise ValueError(f"Forma de prediccion no soportada: {pred_array.shape}")
+    if pred_array.shape[0] < 1 or pred_array.shape[-1] < 3:
+        raise ValueError(f"Prediccion cuantílica incompleta: {pred_array.shape}")
+    if not np.all(np.isfinite(pred_array)):
+        raise ValueError("La salida cuantílica contiene NaN o Inf")
+    return pred_array
+
+
+def _log_prediction_quantile_summary(pred_array: np.ndarray, context: str) -> None:
+    lower = pred_array[..., 0]
+    median = pred_array[..., 1]
+    upper = pred_array[..., 2]
+    logger.info(
+        "%s | pred_array shape=%s | q10[min=%.6f mean=%.6f max=%.6f] | q50[min=%.6f mean=%.6f max=%.6f] | q90[min=%.6f mean=%.6f max=%.6f]",
+        context,
+        pred_array.shape,
+        float(np.min(lower)),
+        float(np.mean(lower)),
+        float(np.max(lower)),
+        float(np.min(median)),
+        float(np.mean(median)),
+        float(np.max(median)),
+        float(np.min(upper)),
+        float(np.mean(upper)),
+        float(np.max(upper)),
+    )
+
+
+def _sanitize_quantile_order(lower, median, upper, context: str) -> tuple[float, float, float]:
+    lower_value = float(lower)
+    median_value = float(median)
+    upper_value = float(upper)
+    ordered = sorted([lower_value, median_value, upper_value])
+    if ordered != [lower_value, median_value, upper_value]:
+        logger.warning(
+            "%s | Cruce cuantílico detectado (q10=%.6f, q50=%.6f, q90=%.6f). Se reordena localmente.",
+            context,
+            lower_value,
+            median_value,
+            upper_value,
+        )
+    return ordered[0], ordered[1], ordered[2]
+
+
+def _normalize_raw_history_frame(raw_ticker_data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    if raw_ticker_data is None or raw_ticker_data.empty:
+        raise ValueError("raw_ticker_data es obligatorio para el forecast recursivo")
+    history = raw_ticker_data.copy()
+    history["Date"] = pd.to_datetime(history["Date"]).dt.tz_localize(None)
+    if "Ticker" not in history.columns:
+        history["Ticker"] = ticker
+    history = history[history["Ticker"].astype(str) == str(ticker)].copy()
+    if history.empty:
+        raise ValueError(f"No hay historial bruto para {ticker}")
+    if "Sector" not in history.columns:
+        history["Sector"] = "Unknown"
+    required_columns = ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"]
+    missing_columns = [column for column in required_columns if column not in history.columns]
+    if missing_columns:
+        raise ValueError(f"El historial bruto no contiene columnas obligatorias: {missing_columns}")
+    history = history.sort_values("Date").drop_duplicates(subset=["Ticker", "Date"], keep="last").reset_index(drop=True)
+    return history
+
+
+def _build_next_step_input(working_history: pd.DataFrame) -> tuple[pd.DataFrame, pd.Timestamp]:
+    last_row = working_history.sort_values("Date").iloc[-1].copy()
+    next_date = pd.Timestamp(estimate_future_business_dates(last_row["Date"], 1)[0]).tz_localize(None)
+    last_close = max(float(last_row["Close"]), 1e-12)
+    last_volume = max(float(last_row["Volume"]), 0.0)
+    placeholder_row = last_row.copy()
+    placeholder_row["Date"] = next_date
+    placeholder_row["Open"] = last_close
+    placeholder_row["High"] = last_close
+    placeholder_row["Low"] = last_close
+    placeholder_row["Close"] = last_close
+    placeholder_row["Volume"] = last_volume
+    extended_history = pd.concat([working_history, pd.DataFrame([placeholder_row])], ignore_index=True)
+    return extended_history, next_date
+
+
+def _append_predicted_step(working_history: pd.DataFrame, next_date: pd.Timestamp, predicted_close: float) -> pd.DataFrame:
+    if not np.isfinite(predicted_close) or predicted_close <= 0.0:
+        raise ValueError(f"Precio previsto no valido para la extension recursiva: {predicted_close}")
+    last_row = working_history.sort_values("Date").iloc[-1].copy()
+    next_row = last_row.copy()
+    next_row["Date"] = pd.Timestamp(next_date).tz_localize(None)
+    next_row["Open"] = predicted_close
+    next_row["High"] = predicted_close
+    next_row["Low"] = predicted_close
+    next_row["Close"] = predicted_close
+    next_row["Volume"] = max(float(last_row["Volume"]), 0.0)
+    extended_history = pd.concat([working_history, pd.DataFrame([next_row])], ignore_index=True)
+    return extended_history.sort_values("Date").reset_index(drop=True)
+
+
+def _validate_forecast_timeline(last_observed_date, forecast_dates, horizon: int) -> None:
+    if len(forecast_dates) != int(horizon):
+        raise ValueError(f"El horizonte generado no coincide con el configurado: {len(forecast_dates)} != {horizon}")
+    if not forecast_dates:
+        raise ValueError("No se han generado fechas futuras")
+    normalized_dates = pd.to_datetime(pd.Index(forecast_dates)).tz_localize(None)
+    if not normalized_dates.is_monotonic_increasing:
+        raise ValueError("Las fechas del forecast no son estrictamente crecientes")
+    if normalized_dates.has_duplicates:
+        raise ValueError("El forecast contiene fechas duplicadas")
+    last_timestamp = pd.Timestamp(last_observed_date).tz_localize(None)
+    if normalized_dates[0] <= last_timestamp:
+        raise ValueError("La primera fecha prevista no es estrictamente posterior a la ultima observada")
+
+
+def _validate_forecast_arrays(median, lower, upper, horizon: int) -> None:
+    median_np = np.asarray(median, dtype=float)
+    lower_np = np.asarray(lower, dtype=float)
+    upper_np = np.asarray(upper, dtype=float)
+    if not (len(median_np) == len(lower_np) == len(upper_np) == int(horizon)):
+        raise ValueError("Las trayectorias previstas no tienen la longitud esperada")
+    if not (np.all(np.isfinite(median_np)) and np.all(np.isfinite(lower_np)) and np.all(np.isfinite(upper_np))):
+        raise ValueError("Las trayectorias previstas contienen NaN o Inf")
+    if np.any(median_np <= 0.0) or np.any(lower_np <= 0.0) or np.any(upper_np <= 0.0):
+        raise ValueError("Las trayectorias previstas contienen precios no positivos")
+    if np.any(lower_np > median_np) or np.any(median_np > upper_np):
+        raise ValueError("Las trayectorias previstas violan lower <= median <= upper")
 
 
 def load_data_and_model(
@@ -171,52 +303,82 @@ def preprocess_data(config, ticker_data, ticker, normalizers, historical_mode=Fa
     )
 
 
-def generate_predictions(config, dataset, model, ticker_data, return_details: bool = False):
-    start_time = time.time()
-    runtime = resolve_execution_context(config, purpose="predict")
-    device = runtime.torch_device
-    model = model.to(device)
+def _recompute_future_features(config: dict, raw_history: pd.DataFrame, ticker: str, normalizers: dict) -> pd.DataFrame:
+    processed_df, _ = preprocess_data(config, raw_history.copy(), ticker, normalizers)
+    return processed_df
 
-    for cat_col in ('Day_of_Week', 'Month'):
+
+def _predict_quantiles_from_processed_frame(
+    config: dict,
+    dataset: TimeSeriesDataSet,
+    model,
+    processed_df: pd.DataFrame,
+    runtime,
+    context: str,
+    prediction_length: int | None = None,
+) -> np.ndarray:
+    ticker_data = processed_df.copy()
+    for cat_col in ("Day_of_Week", "Month"):
         if cat_col in ticker_data.columns:
             ticker_data[cat_col] = ticker_data[cat_col].astype(str)
+
+    update_kwargs = {}
+    if prediction_length is not None:
+        update_kwargs["min_prediction_length"] = int(prediction_length)
+        update_kwargs["max_prediction_length"] = int(prediction_length)
 
     ticker_dataset = TimeSeriesDataSet.from_dataset(
         dataset,
         ticker_data,
         stop_randomization=True,
         predict=True,
+        **update_kwargs,
     )
     dataloader = ticker_dataset.to_dataloader(
         train=False,
-        batch_size=config['prediction']['batch_size'],
+        batch_size=config["prediction"]["batch_size"],
         num_workers=0,
         pin_memory=runtime.pin_memory,
         persistent_workers=False,
     )
-
     log_runtime_context(
         logger,
-        "Inferencia TFT",
+        context,
         runtime,
-        batch_size=int(config['prediction']['batch_size']),
+        batch_size=int(config["prediction"]["batch_size"]),
     )
     autocast_context = get_inference_autocast_context(runtime)
     with torch.inference_mode(), autocast_context:
-        predictions = model.predict(dataloader, mode='quantiles', return_x=True, trainer_kwargs={'logger': False})
+        predictions = model.predict(dataloader, mode="quantiles", return_x=True, trainer_kwargs={"logger": False})
 
-    pred_array = predictions.output
-    if isinstance(pred_array, torch.Tensor):
-        pred_array = pred_array.detach().float().cpu().numpy()
+    pred_array = _extract_prediction_array(predictions)
+    _log_prediction_quantile_summary(pred_array, context)
+    return pred_array
+
+
+def _generate_legacy_dataset_predictions(
+    config: dict,
+    dataset: TimeSeriesDataSet,
+    model,
+    ticker_data: pd.DataFrame,
+    return_details: bool = False,
+):
+    runtime = resolve_execution_context(config, purpose="predict")
+    pred_array = _predict_quantiles_from_processed_frame(
+        config,
+        dataset,
+        model,
+        ticker_data,
+        runtime,
+        context="Inferencia TFT legacy",
+        prediction_length=None,
+    )
 
     target_normalizer = dataset.target_normalizer
     config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
-    normalizers = config_manager.load_normalizers(config['model_name'], required=True)
-    close_normalizer = normalizers.get('Close', target_normalizer)
+    normalizers = config_manager.load_normalizers(config["model_name"], required=True)
+    close_normalizer = normalizers.get("Close", target_normalizer)
     last_close_denorm = denormalize_logged_close(close_normalizer, float(ticker_data['Close'].iloc[-1]))
-
-    if len(pred_array.shape) != 3:
-        raise ValueError(f"Forma de prediccion no soportada: {pred_array.shape}")
 
     relative_returns_lower = pred_array[0, :, 0]
     relative_returns_median = pred_array[0, :, 1]
@@ -227,13 +389,179 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
         relative_returns_lower,
         relative_returns_upper,
     )
-
-    logger.info(f"generate_predictions completado en {time.time() - start_time:.3f}s")
     if return_details:
         return median, lower_bound, upper_bound, {
-            'relative_returns_lower': relative_returns_lower,
-            'relative_returns_median': relative_returns_median,
-            'relative_returns_upper': relative_returns_upper,
-            'last_close_denorm': last_close_denorm,
+            "forecast_mode": "legacy_dataset_predict",
+            "forecast_dates": list(estimate_future_business_dates(ticker_data["Date"].iloc[-1], len(median)).to_pydatetime()),
+            "relative_returns_lower": relative_returns_lower,
+            "relative_returns_median": relative_returns_median,
+            "relative_returns_upper": relative_returns_upper,
+            "predicted_returns_lower": relative_returns_lower,
+            "predicted_returns_median": relative_returns_median,
+            "predicted_returns_upper": relative_returns_upper,
+            "forecast_close_median": np.asarray(median, dtype=float),
+            "forecast_close_lower": np.asarray(lower_bound, dtype=float),
+            "forecast_close_upper": np.asarray(upper_bound, dtype=float),
+            "last_observed_date": pd.Timestamp(ticker_data["Date"].iloc[-1]).to_pydatetime(),
+            "last_observed_close": float(last_close_denorm),
+            "last_close_denorm": float(last_close_denorm),
         }
     return median, lower_bound, upper_bound
+
+
+def generate_recursive_forecast(
+    config: dict,
+    dataset: TimeSeriesDataSet,
+    model,
+    ticker_data: pd.DataFrame,
+    raw_ticker_data: pd.DataFrame,
+    return_details: bool = False,
+):
+    runtime = resolve_execution_context(config, purpose="predict")
+    config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
+    normalizers = config_manager.load_normalizers(config["model_name"], required=True)
+    horizon = int(config["model"]["max_prediction_length"])
+    ticker = str(ticker_data["Ticker"].iloc[-1]) if "Ticker" in ticker_data.columns else str(raw_ticker_data["Ticker"].iloc[-1])
+
+    working_history = _normalize_raw_history_frame(raw_ticker_data, ticker)
+    last_observed_date = pd.Timestamp(working_history["Date"].iloc[-1]).to_pydatetime()
+    last_observed_close = float(working_history["Close"].iloc[-1])
+
+    forecast_dates = []
+    relative_returns_lower = []
+    relative_returns_median = []
+    relative_returns_upper = []
+    forecast_close_median = []
+    forecast_close_lower = []
+    forecast_close_upper = []
+
+    logger.info(
+        "Modo de forecast: recursive_one_step | ultima_fecha_observada=%s | ultimo_close_observado=%.6f | horizonte=%s",
+        last_observed_date,
+        last_observed_close,
+        horizon,
+    )
+
+    for step_index in range(horizon):
+        placeholder_history, next_date = _build_next_step_input(working_history)
+        processed_df = _recompute_future_features(config, placeholder_history, ticker, normalizers)
+        processed_last_date = pd.Timestamp(processed_df["Date"].iloc[-1]).tz_localize(None)
+        if processed_last_date != pd.Timestamp(next_date).tz_localize(None):
+            raise ValueError(
+                f"La ultima fila procesada ({processed_last_date}) no coincide con la fecha futura esperada ({next_date})"
+            )
+
+        pred_array = _predict_quantiles_from_processed_frame(
+            config,
+            dataset,
+            model,
+            processed_df,
+            runtime,
+            context=f"Inferencia TFT recursiva paso {step_index + 1}/{horizon}",
+            prediction_length=1,
+        )
+        if pred_array.shape[1] != 1:
+            raise ValueError(f"El forecast recursivo esperaba exactamente 1 paso y obtuvo {pred_array.shape[1]}")
+
+        step_lower, step_median, step_upper = _sanitize_quantile_order(
+            pred_array[0, 0, 0],
+            pred_array[0, 0, 1],
+            pred_array[0, 0, 2],
+            context=f"Paso {step_index + 1}/{horizon}",
+        )
+        current_last_close = float(working_history["Close"].iloc[-1])
+        next_median_path, next_lower_path, next_upper_path = accumulate_quantile_price_paths(
+            current_last_close,
+            np.asarray([step_median], dtype=float),
+            np.asarray([step_lower], dtype=float),
+            np.asarray([step_upper], dtype=float),
+        )
+
+        forecast_dates.append(pd.Timestamp(next_date).to_pydatetime())
+        relative_returns_lower.append(step_lower)
+        relative_returns_median.append(step_median)
+        relative_returns_upper.append(step_upper)
+        forecast_close_median.append(float(next_median_path[-1]))
+        forecast_close_lower.append(float(next_lower_path[-1]))
+        forecast_close_upper.append(float(next_upper_path[-1]))
+
+        working_history = _append_predicted_step(working_history, next_date, float(next_median_path[-1]))
+
+    forecast_close_median_np = np.asarray(forecast_close_median, dtype=float)
+    forecast_close_lower_np = np.asarray(forecast_close_lower, dtype=float)
+    forecast_close_upper_np = np.asarray(forecast_close_upper, dtype=float)
+    relative_returns_lower_np = np.asarray(relative_returns_lower, dtype=float)
+    relative_returns_median_np = np.asarray(relative_returns_median, dtype=float)
+    relative_returns_upper_np = np.asarray(relative_returns_upper, dtype=float)
+
+    _validate_forecast_timeline(last_observed_date, forecast_dates, horizon)
+    _validate_forecast_arrays(forecast_close_median_np, forecast_close_lower_np, forecast_close_upper_np, horizon)
+
+    logger.info(
+        "Forecast completado | modo=recursive_one_step | primera_fecha=%s | ultima_fecha=%s | retorno_mediano[min=%.6f mean=%.6f max=%.6f] | close_inicial=%.6f | close_final=%.6f | ancho_banda_final=%.6f",
+        forecast_dates[0],
+        forecast_dates[-1],
+        float(np.min(relative_returns_median_np)),
+        float(np.mean(relative_returns_median_np)),
+        float(np.max(relative_returns_median_np)),
+        last_observed_close,
+        float(forecast_close_median_np[-1]),
+        float(forecast_close_upper_np[-1] - forecast_close_lower_np[-1]),
+    )
+
+    if return_details:
+        return forecast_close_median_np, forecast_close_lower_np, forecast_close_upper_np, {
+            "forecast_mode": "recursive_one_step",
+            "forecast_dates": list(forecast_dates),
+            "relative_returns_lower": relative_returns_lower_np,
+            "relative_returns_median": relative_returns_median_np,
+            "relative_returns_upper": relative_returns_upper_np,
+            "predicted_returns_lower": relative_returns_lower_np,
+            "predicted_returns_median": relative_returns_median_np,
+            "predicted_returns_upper": relative_returns_upper_np,
+            "forecast_close_median": forecast_close_median_np,
+            "forecast_close_lower": forecast_close_lower_np,
+            "forecast_close_upper": forecast_close_upper_np,
+            "last_observed_date": last_observed_date,
+            "last_observed_close": float(last_observed_close),
+            "last_close_denorm": float(last_observed_close),
+        }
+    return forecast_close_median_np, forecast_close_lower_np, forecast_close_upper_np
+
+
+def generate_predictions(
+    config,
+    dataset,
+    model,
+    ticker_data,
+    return_details: bool = False,
+    raw_ticker_data: pd.DataFrame | None = None,
+    forecast_mode: str = "recursive_one_step",
+):
+    start_time = time.time()
+    runtime = resolve_execution_context(config, purpose="predict")
+    model = model.to(runtime.torch_device)
+
+    if forecast_mode == "recursive_one_step":
+        if raw_ticker_data is None:
+            logger.warning(
+                "Se solicito forecast recursivo pero no se proporciono raw_ticker_data. Se usara el modo legacy de compatibilidad."
+            )
+            result = _generate_legacy_dataset_predictions(config, dataset, model, ticker_data, return_details=return_details)
+        else:
+            result = generate_recursive_forecast(
+                config,
+                dataset,
+                model,
+                ticker_data,
+                raw_ticker_data=raw_ticker_data,
+                return_details=return_details,
+            )
+    elif forecast_mode == "legacy_dataset_predict":
+        logger.warning("Se esta usando el modo legacy_dataset_predict. Solo deberia usarse para depuracion o compatibilidad.")
+        result = _generate_legacy_dataset_predictions(config, dataset, model, ticker_data, return_details=return_details)
+    else:
+        raise ValueError(f"Modo de forecast no soportado: {forecast_mode}")
+
+    logger.info("generate_predictions completado en %.3fs", time.time() - start_time)
+    return result

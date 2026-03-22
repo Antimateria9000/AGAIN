@@ -162,12 +162,21 @@ artifacts:
         raw_slice = df[df["Ticker"] == ticker].copy()
         _, dataset_loaded, normalizers, model_loaded = load_data_and_model(self.config, ticker, raw_data=raw_slice)
         processed_df, original_close = preprocess_data(self.config, raw_slice, ticker, normalizers)
-        median, lower_bound, upper_bound = generate_predictions(self.config, dataset_loaded, model_loaded, processed_df)
+        median, lower_bound, upper_bound, details = generate_predictions(
+            self.config,
+            dataset_loaded,
+            model_loaded,
+            processed_df,
+            return_details=True,
+            raw_ticker_data=raw_slice,
+        )
 
         self.assertEqual(len(median), self.config["model"]["max_prediction_length"])
         self.assertEqual(len(lower_bound), len(median))
         self.assertEqual(len(upper_bound), len(median))
         self.assertFalse(pd.isna(original_close.iloc[-1]))
+        self.assertEqual(details["forecast_mode"], "recursive_one_step")
+        self.assertEqual(len(details["forecast_dates"]), len(median))
 
     def test_load_data_and_model_reconstruye_dataset_si_falta_el_artefacto(self):
         df = self._build_synthetic_df()
@@ -189,12 +198,20 @@ artifacts:
         raw_slice = df[df["Ticker"] == ticker].copy()
         _, dataset_loaded, normalizers, model_loaded = load_data_and_model(self.config, ticker, raw_data=raw_slice)
         processed_df, original_close = preprocess_data(self.config, raw_slice, ticker, normalizers)
-        median, lower_bound, upper_bound = generate_predictions(self.config, dataset_loaded, model_loaded, processed_df)
+        median, lower_bound, upper_bound, details = generate_predictions(
+            self.config,
+            dataset_loaded,
+            model_loaded,
+            processed_df,
+            return_details=True,
+            raw_ticker_data=raw_slice,
+        )
 
         self.assertEqual(len(median), self.config["model"]["max_prediction_length"])
         self.assertEqual(len(lower_bound), len(median))
         self.assertEqual(len(upper_bound), len(median))
         self.assertFalse(pd.isna(original_close.iloc[-1]))
+        self.assertEqual(details["forecast_mode"], "recursive_one_step")
 
     def test_encoders_legacy_respetan_cardinalidades_sin_slot_nan_extra(self):
         legacy_hyperparams = {

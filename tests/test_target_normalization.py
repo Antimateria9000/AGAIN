@@ -233,15 +233,19 @@ artifacts:
             model_loaded,
             processed_df,
             return_details=True,
+            raw_ticker_data=raw_slice,
         )
 
         recovered_median_returns = price_path_to_step_returns(details["last_close_denorm"], median)
-        recovered_lower_returns = price_path_to_step_returns(details["last_close_denorm"], lower_bound)
-        recovered_upper_returns = price_path_to_step_returns(details["last_close_denorm"], upper_bound)
-
         np.testing.assert_allclose(recovered_median_returns, details["relative_returns_median"], rtol=1e-5, atol=1e-5)
-        np.testing.assert_allclose(recovered_lower_returns, details["relative_returns_lower"], rtol=1e-5, atol=1e-5)
-        np.testing.assert_allclose(recovered_upper_returns, details["relative_returns_upper"], rtol=1e-5, atol=1e-5)
+        self.assertEqual(details["forecast_mode"], "recursive_one_step")
+        self.assertEqual(len(details["forecast_dates"]), len(median))
+        self.assertTrue(np.isfinite(lower_bound).all())
+        self.assertTrue(np.isfinite(median).all())
+        self.assertTrue(np.isfinite(upper_bound).all())
+        self.assertTrue((lower_bound <= median).all())
+        self.assertTrue((median <= upper_bound).all())
+        self.assertTrue((lower_bound > 0.0).all())
 
     def test_artefactos_legacy_incompatibles_exigen_regeneracion(self):
         df = self._build_synthetic_df()

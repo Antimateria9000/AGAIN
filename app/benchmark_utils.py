@@ -70,7 +70,14 @@ def _process_ticker(ticker: str, full_data: pd.DataFrame, config: dict, trim_dat
 
     ticker_data, original_close = preprocess_data(config, new_data, ticker, normalizers, historical_mode=True)
     with torch.no_grad():
-        median, _, _, details = generate_predictions(config, dataset, model, ticker_data, return_details=True)
+        median, _, _, details = generate_predictions(
+            config,
+            dataset,
+            model,
+            ticker_data,
+            return_details=True,
+            raw_ticker_data=new_data,
+        )
 
     future_actual = historical_close[historical_close.index > trim_date].sort_index().iloc[: len(median)]
     if len(future_actual) != len(median):

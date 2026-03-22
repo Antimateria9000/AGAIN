@@ -49,8 +49,15 @@ class ForecastService:
         _, dataset, normalizers, model = load_data_and_model(self.config, ticker, raw_data=new_data)
         ticker_data, original_close = preprocess_data(self.config, new_data, ticker, normalizers)
         with torch.no_grad():
-            median, lower_bound, upper_bound = generate_predictions(self.config, dataset, model, ticker_data)
-        return ticker_data, original_close, median, lower_bound, upper_bound
+            median, lower_bound, upper_bound, details = generate_predictions(
+                self.config,
+                dataset,
+                model,
+                ticker_data,
+                return_details=True,
+                raw_ticker_data=new_data,
+            )
+        return ticker_data, original_close, median, lower_bound, upper_bound, details
 
     def predict_historical(self, ticker, start_date, end_date):
         self._ensure_model_ready()
@@ -70,7 +77,13 @@ class ForecastService:
         _, dataset, normalizers, model = load_data_and_model(self.config, ticker, raw_data=new_data, historical_mode=True)
         ticker_data, original_close = preprocess_data(self.config, new_data, ticker, normalizers, historical_mode=True)
         with torch.no_grad():
-            median, lower_bound, upper_bound = generate_predictions(self.config, dataset, model, ticker_data)
+            median, lower_bound, upper_bound = generate_predictions(
+                self.config,
+                dataset,
+                model,
+                ticker_data,
+                raw_ticker_data=new_data,
+            )
 
         historical_close = full_data.set_index("Date")["Close"]
         return ticker_data, original_close, median, lower_bound, upper_bound, historical_close

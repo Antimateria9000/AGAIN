@@ -77,7 +77,7 @@ def _render_prediction_view(config: dict, forecast_service: ForecastService, yea
         with st.spinner("Generando prediccion..."):
             start_date = pd.Timestamp(datetime.now()).tz_localize(None) - pd.Timedelta(days=years * 365)
             try:
-                ticker_data, original_close, median, lower_bound, upper_bound = forecast_service.predict(
+                ticker_data, original_close, median, lower_bound, upper_bound, details = forecast_service.predict(
                     ticker_input,
                     start_date,
                     datetime.now().replace(tzinfo=None),
@@ -90,6 +90,7 @@ def _render_prediction_view(config: dict, forecast_service: ForecastService, yea
                     lower_bound,
                     upper_bound,
                     ticker_input,
+                    forecast_dates=details.get("forecast_dates"),
                     historical_period_days=st.session_state.historical_period_days,
                 )
                 st.plotly_chart(fig, use_container_width=True)
