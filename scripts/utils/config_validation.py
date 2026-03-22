@@ -75,6 +75,10 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
     if processed_dataset_path.suffix.lower() != ".pt":
         raise ValueError("La ruta 'data.processed_data_path' debe terminar en '.pt'")
 
+    session_backend = str(config.get("data_fetch", {}).get("session_backend", "requests")).strip().lower()
+    if session_backend not in {"requests", "curl_cffi"}:
+        raise ValueError("La clave 'data_fetch.session_backend' debe ser 'requests' o 'curl_cffi'")
+
     return config
 
 
@@ -136,6 +140,7 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     resolved["data_fetch"].setdefault("auto_reset_cookie_cache", True)
     resolved["data_fetch"].setdefault("trust_env_proxies", False)
     resolved["data_fetch"].setdefault("use_yfinance_sector_lookup", False)
+    resolved["data_fetch"].setdefault("session_backend", "requests")
     resolved["data_fetch"].setdefault("yfinance_cache_dir", str(Path(resolved["paths"]["data_dir"]) / "cache" / "yfinance"))
 
     return resolved

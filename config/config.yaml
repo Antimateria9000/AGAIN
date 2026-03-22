@@ -94,6 +94,7 @@ data_fetch:
   auto_reset_cookie_cache: true
   trust_env_proxies: false
   use_yfinance_sector_lookup: false
+  session_backend: requests
   yfinance_cache_dir: data/cache/yfinance
 
 paths:

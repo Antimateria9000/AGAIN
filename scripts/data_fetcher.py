@@ -48,6 +48,7 @@ class DataFetcher:
             repair=bool(provider_config.get("repair", True)),
             auto_reset_cookie_cache=bool(provider_config.get("auto_reset_cookie_cache", True)),
             trust_env_proxies=bool(provider_config.get("trust_env_proxies", False)),
+            session_backend=str(provider_config.get("session_backend", "requests")),
         )
 
     def _configure_yfinance_cache(self) -> None:
@@ -100,6 +101,20 @@ class DataFetcher:
     @staticmethod
     def _empty_output_frame() -> pd.DataFrame:
         return pd.DataFrame(columns=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"])
+
+    @staticmethod
+    def _describe_provider_failure(result: FetchResult | None) -> str:
+        if not isinstance(result, FetchResult):
+            return "Sin detalle del proveedor"
+
+        metadata = result.metadata
+        for attempt in reversed(metadata.attempts):
+            if attempt.error:
+                return attempt.error
+        for warning in reversed(metadata.warnings):
+            if warning:
+                return warning
+        return "Sin detalle del proveedor"
 
     def _fallback_from_local_raw_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         if not self.raw_data_path.exists():
@@ -193,7 +208,8 @@ class DataFetcher:
 
             df = result.data
             if df.empty:
-                logger.warning("No hay datos descargados para %s", ticker)
+                detail = self._describe_provider_failure(result)
+                logger.warning("No hay datos descargados para %s. Detalle del proveedor: %s", ticker, detail)
                 return self._fallback_from_local_raw_data(ticker, start_date, end_date)
 
             prepared = self._prepare_output_frame(ticker, df)
@@ -234,6 +250,9 @@ class DataFetcher:
         except Exception as exc:
             logger.error("Fallo general en la descarga por lotes: %s", exc)
             bundle = {}
+            general_failure_detail = str(exc)
+        else:
+            general_failure_detail = None
 
         for ticker in normalized_tickers:
             result = bundle.get(ticker) if isinstance(bundle, dict) else None
@@ -241,8 +260,11 @@ class DataFetcher:
             if frame.empty:
                 fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
                 if fallback.empty:
-                    logger.warning("Se omite %s por falta de datos", ticker)
-                    discarded_details[ticker] = "Sin datos descargados ni fallback local"
+                    detail = self._describe_provider_failure(result)
+                    if detail == "Sin detalle del proveedor" and general_failure_detail:
+                        detail = general_failure_detail
+                    logger.warning("Se omite %s por falta de datos. Detalle del proveedor: %s", ticker, detail)
+                    discarded_details[ticker] = detail
                     continue
                 results.append(fallback)
                 successful_tickers.append(ticker)
@@ -253,8 +275,11 @@ class DataFetcher:
             if prepared.empty:
                 fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
                 if fallback.empty:
-                    logger.warning("Se omite %s por falta de datos utiles", ticker)
-                    discarded_details[ticker] = "Sin datos utiles tras filtrar el rango solicitado"
+                    detail = self._describe_provider_failure(result)
+                    if detail == "Sin detalle del proveedor":
+                        detail = "Sin datos utiles tras filtrar el rango solicitado"
+                    logger.warning("Se omite %s por falta de datos utiles. Detalle: %s", ticker, detail)
+                    discarded_details[ticker] = detail
                     continue
                 results.append(fallback)
                 successful_tickers.append(ticker)

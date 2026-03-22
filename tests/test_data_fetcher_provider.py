@@ -9,7 +9,7 @@ from yfinance.exceptions import YFRateLimitError
 
 from scripts.data_fetcher import DataFetcher
 from scripts.runtime_config import ConfigManager
-from scripts.utils.yfinance_provider import FetchMetadata, FetchResult, YFinanceProvider
+from scripts.utils.yfinance_provider import DownloadAttempt, FetchMetadata, FetchResult, YFinanceProvider
 
 
 def build_metadata(symbol: str, backend_used: str | None = None) -> FetchMetadata:
@@ -108,6 +108,16 @@ data:
   benchmark_tickers_file: {self.root / "config" / "benchmark_tickers.yaml"}
   train_processed_df_path: {self.root / "data" / "train" / "train_processed_df.parquet"}
   val_processed_df_path: {self.root / "data" / "train" / "val_processed_df.parquet"}
+data_fetch:
+  session_backend: requests
+  max_workers: 1
+  retries: 2
+  timeout: 1.0
+  min_delay: 0.0
+  auto_reset_cookie_cache: true
+  trust_env_proxies: false
+  use_yfinance_sector_lookup: false
+  yfinance_cache_dir: {self.root / "data" / "cache" / "yfinance"}
 paths:
   data_dir: {self.root / "data"}
   models_dir: {self.root / "models"}
@@ -173,6 +183,11 @@ artifacts:
         self.assertEqual(result.metadata.backend_used, "download")
         self.assertEqual(list(result.data.columns), ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividends", "Stock Splits"])
         self.assertEqual(result.data.attrs["provider_metadata"]["backend_used"], "download")
+
+    def test_provider_usa_requests_como_backend_seguro_por_defecto(self):
+        provider = YFinanceProvider(max_workers=1, retries=1, min_delay=0.0, timeout=1.0)
+
+        self.assertEqual(provider.session_backend, "requests")
 
     def test_fetch_stock_data_usa_cache_local_si_falla_la_descarga(self):
         cached = pd.DataFrame(
@@ -255,6 +270,66 @@ artifacts:
         self.assertEqual(result.metadata.backend_used, "download")
         self.assertTrue(any("cookie/crumb" in warning for warning in result.metadata.warnings))
         reset_mock.assert_called_once()
+
+    def test_provider_sanea_la_cache_corrupta_antes_de_descargar(self):
+        provider = YFinanceProvider(max_workers=1, retries=1, min_delay=0.0, timeout=1.0, auto_reset_cookie_cache=True)
+        frame = self._history_frame().reset_index().rename(columns={"index": "Date"})
+
+        with mock.patch.object(
+            provider,
+            "_inspect_cookie_cache_issues",
+            return_value=["La entrada persistente 'basic' es de tipo str"],
+        ), mock.patch.object(provider, "_reset_cookie_runtime") as reset_mock, mock.patch.object(
+            provider,
+            "_download_range",
+            return_value=(provider._normalize_raw_history(frame.set_index("Date"), "AAPL", "1d"), False, 1),
+        ):
+            result = provider.get_history_bundle(
+                symbols="AAPL",
+                start=pd.Timestamp("2024-01-01"),
+                end=pd.Timestamp("2024-01-10"),
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+
+        self.assertFalse(result.data.empty)
+        self.assertEqual(result.metadata.backend_used, "ticker")
+        reset_mock.assert_called_once()
+
+    def test_fetch_many_stocks_reporta_el_detalle_real_del_provider(self):
+        fetcher = DataFetcher(self.config_manager, years=1)
+        failure_result = FetchResult(
+            symbol="AAPL",
+            data=pd.DataFrame(),
+            metadata=build_metadata("AAPL", backend_used=None),
+        )
+        failure_result.metadata.attempts.append(
+            DownloadAttempt(
+                attempt_number=1,
+                backend="ticker",
+                interval="1d",
+                start="2024-01-01T00:00:00",
+                end="2024-01-10T00:00:00",
+                duration_seconds=0.01,
+                success=False,
+                rows=0,
+                error="AttributeError(\"'str' object has no attribute 'name'\")",
+            )
+        )
+
+        with mock.patch.object(fetcher.provider, "get_history_bundle", return_value={"AAPL": failure_result}), mock.patch.object(
+            fetcher, "_fallback_from_local_raw_data", return_value=fetcher._empty_output_frame()
+        ):
+            combined, report = fetcher.fetch_many_stocks_with_report(
+                ["AAPL"],
+                pd.Timestamp("2024-01-02").to_pydatetime(),
+                pd.Timestamp("2024-01-10").to_pydatetime(),
+            )
+
+        self.assertTrue(combined.empty)
+        self.assertEqual(report.discarded_tickers, ["AAPL"])
+        self.assertIn("AttributeError", report.discarded_details["AAPL"])
 
     def test_fetch_stock_data_no_consulta_info_si_el_lookup_de_sector_esta_desactivado(self):
         fetcher = DataFetcher(self.config_manager, years=1)

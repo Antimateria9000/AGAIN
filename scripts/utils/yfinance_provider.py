@@ -25,7 +25,7 @@ except Exception:
 
 
 PROVIDER_NAME = "TFT.YFinanceProvider"
-PROVIDER_VERSION = "1.1.0"
+PROVIDER_VERSION = "1.2.0"
 
 EXPORT_COLUMNS = [
     "Date",
@@ -87,6 +87,7 @@ PROXY_ENV_KEYS = (
     "GIT_HTTPS_PROXY",
 )
 PROXY_ENV_LOCK = RLock()
+ALLOWED_SESSION_BACKENDS = {"requests", "curl_cffi"}
 
 
 class YFinanceProviderError(Exception):
@@ -427,6 +428,7 @@ class YFinanceProvider:
         repair: bool = True,
         auto_reset_cookie_cache: bool = True,
         trust_env_proxies: bool = False,
+        session_backend: str = "requests",
     ) -> None:
         self.max_workers = int(max_workers)
         self.retries = int(retries)
@@ -438,7 +440,8 @@ class YFinanceProvider:
         self.repair = bool(repair)
         self.auto_reset_cookie_cache = bool(auto_reset_cookie_cache)
         self.trust_env_proxies = bool(trust_env_proxies)
-        self.session_backend = "curl_cffi" if curl_requests is not None else "requests"
+        self.session_backend = self._normalize_session_backend(session_backend)
+        self._cookie_cache_lock = RLock()
 
         if self.max_workers < 1:
             raise ProviderConfigurationError("max_workers debe ser >= 1.")
@@ -452,6 +455,26 @@ class YFinanceProvider:
             raise ProviderConfigurationError("max_intraday_lookback_days debe ser >= 1.")
 
         self._configure_cache()
+        if self.session_backend == "curl_cffi":
+            logger.warning(
+                "Se ha activado el backend de sesion curl_cffi. Con la version actual de yfinance puede "
+                "dejar cookies persistentes incompatibles. Usa 'requests' salvo que haya un motivo "
+                "tecnico claro para asumir ese riesgo."
+            )
+
+    @staticmethod
+    def _normalize_session_backend(session_backend: str) -> str:
+        backend = str(session_backend or "requests").strip().lower()
+        if backend not in ALLOWED_SESSION_BACKENDS:
+            allowed = ", ".join(sorted(ALLOWED_SESSION_BACKENDS))
+            raise ProviderConfigurationError(
+                f"session_backend no soportado: {session_backend!r}. Valores permitidos: {allowed}."
+            )
+        if backend == "curl_cffi" and curl_requests is None:
+            raise ProviderConfigurationError(
+                "session_backend='curl_cffi' requiere que curl_cffi este instalado en el entorno."
+            )
+        return backend
 
     def _configure_cache(self) -> None:
         if self.cache_dir is None:
@@ -463,10 +486,12 @@ class YFinanceProvider:
             logger.warning("No se ha podido fijar la cache de yfinance en %s: %s", self.cache_dir, exc)
 
     def _build_session(self) -> requests.Session:
-        if curl_requests is not None:
+        if self.session_backend == "curl_cffi":
             session = curl_requests.Session(impersonate="chrome")
-        else:
+        elif self.session_backend == "requests":
             session = requests.Session()
+        else:
+            raise ProviderConfigurationError(f"Backend de sesion no soportado: {self.session_backend!r}")
         if hasattr(session, "trust_env"):
             session.trust_env = self.trust_env_proxies
         if not self.trust_env_proxies and hasattr(session, "proxies"):
@@ -506,6 +531,58 @@ class YFinanceProvider:
         except Exception:
             return None
 
+    @staticmethod
+    def _cookie_object_is_valid(cookie: object) -> bool:
+        return hasattr(cookie, "name") and hasattr(cookie, "value")
+
+    @staticmethod
+    def _cookie_container_is_valid(cookie: object) -> bool:
+        return hasattr(cookie, "items") or hasattr(cookie, "get_dict") or hasattr(cookie, "_cookies")
+
+    def _inspect_cookie_cache_issues(self) -> List[str]:
+        issues: List[str] = []
+        try:
+            from yfinance.cache import get_cookie_cache
+
+            cookie_cache = get_cookie_cache()
+            basic_cookie = cookie_cache.lookup("basic")
+            csrf_cookie = cookie_cache.lookup("csrf")
+        except Exception as exc:
+            issues.append(f"No se ha podido leer la cache persistente de cookies de yfinance: {exc}")
+            return issues
+
+        if basic_cookie is not None:
+            cookie = basic_cookie.get("cookie")
+            if cookie is not None and not self._cookie_object_is_valid(cookie):
+                issues.append(
+                    "La entrada persistente 'basic' de yfinance no contiene un objeto Cookie valido "
+                    f"(tipo detectado: {type(cookie).__name__})"
+                )
+
+        if csrf_cookie is not None:
+            cookie = csrf_cookie.get("cookie")
+            if cookie is not None and not self._cookie_container_is_valid(cookie):
+                issues.append(
+                    "La entrada persistente 'csrf' de yfinance no contiene un contenedor de cookies valido "
+                    f"(tipo detectado: {type(cookie).__name__})"
+                )
+
+        return issues
+
+    def _sanitize_cookie_cache_if_needed(self) -> None:
+        if not self.auto_reset_cookie_cache:
+            return
+        with self._cookie_cache_lock:
+            issues = self._inspect_cookie_cache_issues()
+            if not issues:
+                return
+            logger.warning(
+                "Se ha detectado una cache de cookies de yfinance corrupta o incompatible. "
+                "Se reiniciara antes de descargar. Detalle: %s",
+                "; ".join(issues),
+            )
+            self._reset_cookie_runtime()
+
     def _reset_cookie_runtime(self) -> None:
         try:
             from yfinance.cache import _CookieCacheManager, _CookieDBManager, get_cookie_cache
@@ -528,6 +605,13 @@ class YFinanceProvider:
                 try:
                     if target.exists():
                         target.unlink()
+                except PermissionError as exc:
+                    logger.debug(
+                        "No se ha podido borrar %s tras invalidar la cache por API. "
+                        "La invalidacion logica ya se ha aplicado: %s",
+                        target,
+                        exc,
+                    )
                 except Exception as exc:
                     logger.warning("No se ha podido limpiar %s: %s", target, exc)
 
@@ -558,6 +642,24 @@ class YFinanceProvider:
             if "too many requests" in message or "rate limit" in message or "429" in message:
                 return True
         return False
+
+    def _is_cookie_cache_error(self, exc: Exception) -> bool:
+        for item in self._exception_chain(exc):
+            message = str(item).lower()
+            if isinstance(item, AttributeError) and "'str' object has no attribute 'name'" in str(item):
+                return True
+            if "unable to open database file" in message:
+                return True
+            if "database is locked" in message:
+                return True
+            if "cookie" in message and "crumb" in message:
+                return True
+        return False
+
+    def _should_reset_cookie_cache(self, exc: Exception) -> bool:
+        if not self.auto_reset_cookie_cache:
+            return False
+        return self._is_rate_limit_error(exc) or self._is_cookie_cache_error(exc)
 
     def _download_via_ticker(
         self,
@@ -895,11 +997,13 @@ class YFinanceProvider:
                             error=str(exc),
                         )
                     )
-                    if self.auto_reset_cookie_cache and not reset_done and self._is_rate_limit_error(exc):
+                    if not reset_done and self._should_reset_cookie_cache(exc):
                         reset_done = True
-                        metadata.warnings.append(
-                            "Se ha detectado un posible bloqueo por cookie/crumb de yfinance y se ha reiniciado la cache persistente."
-                        )
+                        if self._is_rate_limit_error(exc):
+                            reason = "posible bloqueo por tasa o cookie/crumb"
+                        else:
+                            reason = "cache de cookies de yfinance corrupta o incompatible"
+                        metadata.warnings.append(f"Se ha detectado {reason} y se ha reiniciado la cache persistente.")
                         self._reset_cookie_runtime()
                         time.sleep(max(1.0, self.min_delay))
 
@@ -972,6 +1076,7 @@ class YFinanceProvider:
         actions: bool = False,
     ) -> Union[FetchResult, Dict[str, FetchResult]]:
         if isinstance(symbols, str):
+            self._sanitize_cookie_cache_if_needed()
             return self._fetch_one_result(
                 symbol=symbols,
                 start=start,
@@ -992,6 +1097,7 @@ class YFinanceProvider:
         if not normalized_symbols:
             return {}
 
+        self._sanitize_cookie_cache_if_needed()
         results: Dict[str, FetchResult] = {}
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
