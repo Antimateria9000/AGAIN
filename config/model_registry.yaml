@@ -1,0 +1,23 @@
+active_profile_path: config\runtime_profiles\Gen6_1__single__BBVA_MC.yaml
+profiles:
+  Gen6_1__single__BBVA_MC:
+    model_name: Gen6_1__single__BBVA_MC
+    base_model_name: Gen6_1
+    profile_path: config\runtime_profiles\Gen6_1__single__BBVA_MC.yaml
+    label: 'Ticker unico: BBVA.MC'
+    description: ''
+    notes: ''
+    universe_mode: single_ticker
+    single_ticker_symbol: BBVA.MC
+    predefined_group_name: null
+    requested_tickers:
+    - BBVA.MC
+    downloaded_tickers:
+    - BBVA.MC
+    discarded_tickers: []
+    final_tickers_used:
+    - BBVA.MC
+    created_at: '2026-03-22T17:51:49'
+    last_trained_at: '2026-03-22T17:51:49'
+    prediction_horizon: 60
+    years: 3
