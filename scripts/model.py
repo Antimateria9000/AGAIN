@@ -8,13 +8,15 @@ import torch
 from pytorch_forecasting import TemporalFusionTransformer
 
 from scripts.config_manager import ConfigManager
+from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.lightning_compat import LightningModule
 from scripts.utils.model_config import HyperparamFactory, ModelConfig
 from scripts.utils.validation_utils import create_validation_plot, log_validation_details
 
 logger = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("medium")
-torch.backends.cuda.matmul.allow_tf32 = True
+if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+    torch.backends.cuda.matmul.allow_tf32 = True
 
 
 
@@ -22,7 +24,7 @@ def move_to_device(obj: Any, device: torch.device) -> Any:
     if isinstance(obj, torch.Tensor):
         if obj.device == device:
             return obj
-        return obj.to(device, non_blocking=True)
+        return obj.to(device, non_blocking=device.type == "cuda")
     if isinstance(obj, dict):
         return {key: move_to_device(value, device) for key, value in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -39,6 +41,7 @@ class CustomTemporalFusionTransformer(LightningModule):
         self.dataset = dataset
         self.config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
         self.batch_size = int(config["training"]["batch_size"])
+        self.runtime = resolve_execution_context(config, purpose="train")
         self._load_normalizers()
         self._initialize_model(dataset)
         self._save_hyperparameters()
@@ -85,7 +88,7 @@ class CustomTemporalFusionTransformer(LightningModule):
     def predict(self, data, **kwargs):
         start_time = time.time()
         self.eval()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = self.runtime.torch_device
         logger.info("Prediccion en dispositivo: %s", device)
         if isinstance(data, torch.utils.data.DataLoader):
             predictions = self.model.predict(data, **kwargs)
@@ -120,22 +123,21 @@ class CustomTemporalFusionTransformer(LightningModule):
         if torch.isnan(y_target).any() or torch.isinf(y_target).any():
             raise ValueError(f"y_target contiene NaN o Inf en batch {batch_idx}")
 
-        with torch.amp.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", dtype=torch.bfloat16):
-            y_hat = self(x)
-            if torch.isnan(y_hat).any() or torch.isinf(y_hat).any():
-                raise ValueError(f"y_hat contiene NaN o Inf en batch {batch_idx}")
-            loss = self.model.loss(y_hat, y_target)
-            if not torch.isfinite(loss):
-                raise FloatingPointError(f"Loss no finita en batch {batch_idx}: {loss}")
+        y_hat = self(x)
+        if torch.isnan(y_hat).any() or torch.isinf(y_hat).any():
+            raise ValueError(f"y_hat contiene NaN o Inf en batch {batch_idx}")
+        loss = self.model.loss(y_hat, y_target)
+        if not torch.isfinite(loss):
+            raise FloatingPointError(f"Loss no finita en batch {batch_idx}: {loss}")
 
-            if stage == "val":
-                y_hat_median = y_hat[:, :, 1] if y_hat.dim() == 3 else y_hat
-                mape = torch.mean(torch.abs((y_target - y_hat_median) / (y_target + 1e-10))) * 100
-                self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
-                direction_pred = torch.sign(y_hat_median)
-                direction_true = torch.sign(y_target)
-                directional_accuracy = (direction_pred == direction_true).float().mean() * 100
-                self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
+        if stage == "val":
+            y_hat_median = y_hat[:, :, 1] if y_hat.dim() == 3 else y_hat
+            mape = torch.mean(torch.abs((y_target - y_hat_median) / (y_target + 1e-10))) * 100
+            self.log(f"{stage}_mape", mape, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
+            direction_pred = torch.sign(y_hat_median)
+            direction_true = torch.sign(y_target)
+            directional_accuracy = (direction_pred == direction_true).float().mean() * 100
+            self.log(f"{stage}_directional_accuracy", directional_accuracy, on_step=False, on_epoch=True, prog_bar=True, batch_size=x["encoder_cont"].size(0))
 
         batch_size = x["encoder_cont"].size(0)
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)

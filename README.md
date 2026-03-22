@@ -25,7 +25,7 @@ No es un sistema listo para inversion real. El alcance actual es investigacion a
 
 - Python 3.11
 - Entorno virtual recomendado
-- Para GPU, instala la variante oficial de torch segun la documentacion de PyTorch
+- Para GPU NVIDIA, instala la variante oficial CUDA de torch segun la documentacion de PyTorch
 
 ## Instalacion reproducible de referencia
 
@@ -37,7 +37,12 @@ python -m pip install -r requirements-dev.txt
 python -m pip install -e .
 ```
 
-El archivo `requirements.txt` fija un entorno de referencia para CPU. Si vas a usar CUDA, debes sustituir la instalacion de `torch` por la variante oficial compatible con tu hardware.
+El archivo `requirements.txt` fija un entorno de referencia para CPU. Si vas a usar CUDA, sustituye la instalacion de `torch` por la variante oficial compatible con tu hardware. Para este proyecto se ha dejado preparado:
+
+- `requirements-torch-cu128.txt`
+- `instalar_torch_cuda.bat`
+
+El proyecto detecta automaticamente CUDA y hace fallback limpio a CPU si no esta disponible.
 
 ## Ejecucion
 
@@ -50,7 +55,7 @@ python start_training.py --regions global --years 3
 ### Aplicacion Streamlit
 
 ```bash
-streamlit run app/app.py
+streamlit run streamlit_app.py
 ```
 
 ## Tests
@@ -151,6 +156,7 @@ Si se publican metricas concretas, deben ir acompanadas de seed, rango temporal,
 - El benchmark actual sigue siendo estadistico, no un backtest economico final
 - Las fechas futuras de la vista de prediccion usan dias habiles aproximados, no calendario bursatil por mercado
 - Los artefactos legacy del repositorio pueden requerir regeneracion si no tienen checksums o metadatos compatibles
+- La GPU solo se usara si la instalacion de torch dentro de `.venv` incluye soporte CUDA y `torch.cuda.is_available()` devuelve `True`
 
 ## Aviso
 

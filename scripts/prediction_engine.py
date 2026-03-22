@@ -1,6 +1,5 @@
 import logging
 import time
-from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
 from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
 from scripts.utils.data_schema import KNOWN_CATEGORICAL_FEATURES, NUMERIC_FEATURES, STATIC_CATEGORICALS, TARGET_COLUMN, build_schema_hash
+from scripts.utils.device_utils import get_inference_autocast_context, log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import LIGHTNING_LOGGER_NAME
 from scripts.utils.prediction_utils import (
     accumulate_quantile_price_paths,
@@ -97,8 +97,9 @@ def load_data_and_model(
     raw_data: pd.DataFrame | None = None,
 ):
     start_time = time.time()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Inferencia en dispositivo: {device}")
+    runtime = resolve_execution_context(config, purpose="predict")
+    device = runtime.torch_device
+    log_runtime_context(logger, "Carga de inferencia", runtime)
     config_path = config.get("_meta", {}).get("config_path")
 
     if raw_data is None:
@@ -170,7 +171,8 @@ def preprocess_data(config, ticker_data, ticker, normalizers, historical_mode=Fa
 
 def generate_predictions(config, dataset, model, ticker_data, return_details: bool = False):
     start_time = time.time()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    runtime = resolve_execution_context(config, purpose="predict")
+    device = runtime.torch_device
     model = model.to(device)
 
     for cat_col in ('Day_of_Week', 'Month'):
@@ -187,21 +189,23 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
         train=False,
         batch_size=config['prediction']['batch_size'],
         num_workers=0,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=runtime.pin_memory,
         persistent_workers=False,
     )
 
-    autocast_context = (
-        torch.amp.autocast(device_type='cuda', dtype=torch.float16)
-        if torch.cuda.is_available()
-        else nullcontext()
+    log_runtime_context(
+        logger,
+        "Inferencia TFT",
+        runtime,
+        batch_size=int(config['prediction']['batch_size']),
     )
+    autocast_context = get_inference_autocast_context(runtime)
     with torch.inference_mode(), autocast_context:
         predictions = model.predict(dataloader, mode='quantiles', return_x=True, trainer_kwargs={'logger': False})
 
     pred_array = predictions.output
     if isinstance(pred_array, torch.Tensor):
-        pred_array = pred_array.detach().cpu().numpy()
+        pred_array = pred_array.detach().float().cpu().numpy()
 
     target_normalizer = dataset.target_normalizer
     pred_array = inverse_transform_if_available(target_normalizer, torch.from_numpy(pred_array))

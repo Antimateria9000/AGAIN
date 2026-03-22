@@ -17,6 +17,7 @@ from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
 from scripts.runtime_config import ConfigManager
 from scripts.train import train_model
+from scripts.utils.device_utils import log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import seed_everything
 from scripts.utils.logging_utils import configure_logging
 from scripts.utils.model_registry import register_model_profile
@@ -72,7 +73,8 @@ def set_global_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    runtime = resolve_execution_context({"training": {"accelerator": "auto", "precision": "auto"}}, purpose="train")
+    if runtime.hardware.cuda_available:
         torch.cuda.manual_seed_all(seed)
     seed_everything(seed, workers=True)
     logger.info("Semilla global fijada en %s", seed)
@@ -250,6 +252,8 @@ def start_training(
         predefined_group_name=predefined_group_name,
     )
     set_global_seed(int(config["training"]["seed"]))
+    training_runtime = resolve_execution_context(config, purpose="train")
+    log_runtime_context(logger, "Inicio del entrenamiento", training_runtime)
 
     df, requested_tickers, downloaded_tickers = _fetch_training_dataframe(config_manager, config, years)
     if df.empty:
@@ -299,7 +303,7 @@ def start_training(
             new_model=new_model,
             config=config,
             normalizers_path=normalizers_path,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device=training_runtime.device_string,
         )
         continue_training = True
 

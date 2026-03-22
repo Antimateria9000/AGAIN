@@ -13,6 +13,7 @@ from scripts.model import build_model
 from scripts.utils.artifact_utils import ensure_relative_to, verify_checksum, write_checksum, write_metadata
 from scripts.utils.batch_size_estimator import estimate_batch_size
 from scripts.utils.data_schema import build_artifact_metadata, build_schema_hash
+from scripts.utils.device_utils import log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import CSVLogger, EarlyStopping, pl
 
 logger = logging.getLogger(__name__)
@@ -74,32 +75,20 @@ def _build_checkpoint_paths(config: dict) -> tuple[Path, Path, Path]:
     last_path = canonical_path.with_name(f"{stem}_last{suffix}")
     return canonical_path, best_path, last_path
 
-
-
-def _resolve_accelerator(config: dict) -> tuple[str, str]:
-    configured_accelerator = config["training"].get("accelerator", "auto")
-    configured_precision = config["training"].get("precision", "auto")
-
-    accelerator = "gpu" if configured_accelerator == "auto" and torch.cuda.is_available() else configured_accelerator
-    if accelerator == "auto":
-        accelerator = "cpu"
-
-    if configured_precision == "auto":
-        precision = "16-mixed" if accelerator == "gpu" else "32-true"
-    else:
-        precision = configured_precision
-    return accelerator, precision
-
-
-
 def _create_trainer(config: dict, checkpoint_path: Path) -> pl.Trainer:
-    accelerator, precision = _resolve_accelerator(config)
+    runtime = resolve_execution_context(config, purpose="train")
+    log_runtime_context(logger, "Entrenamiento TFT", runtime)
+    deterministic_mode = "warn" if runtime.uses_cuda else True
+    if runtime.uses_cuda:
+        logger.warning(
+            "En GPU se usa deterministic='warn' para evitar fallos con operaciones CUDA sin implementacion determinista estricta."
+        )
     return pl.Trainer(
         max_epochs=config["training"]["max_epochs"],
-        accelerator=accelerator,
+        accelerator=runtime.accelerator,
         devices=1,
-        precision=precision,
-        deterministic=True,
+        precision=runtime.precision,
+        deterministic=deterministic_mode,
         callbacks=[
             EarlyStopping(monitor="val_loss", patience=config["training"]["early_stopping_patience"]),
             CustomModelCheckpoint(monitor="val_loss", save_path=str(checkpoint_path), mode="min"),
@@ -113,12 +102,13 @@ def _create_trainer(config: dict, checkpoint_path: Path) -> pl.Trainer:
 
 def _to_dataloader(dataset: TimeSeriesDataSet, train: bool, config: dict):
     num_workers = int(config["training"]["num_workers"])
+    runtime = resolve_execution_context(config, purpose="train")
     return dataset.to_dataloader(
         train=train,
         batch_size=int(config["training"]["batch_size"]),
         num_workers=num_workers,
         persistent_workers=num_workers > 0,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=runtime.pin_memory,
         prefetch_factor=config["training"]["prefetch_factor"] if num_workers > 0 else None,
     )
 
@@ -158,7 +148,8 @@ def train_model(dataset: tuple, config: dict, use_optuna: bool = True, continue_
     if len(train_dataset) == 0 or len(val_dataset) == 0:
         raise ValueError(f"Datasets vacios: train={len(train_dataset)}, val={len(val_dataset)}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    runtime = resolve_execution_context(config, purpose="train")
+    device = runtime.torch_device
     model_save_path, best_model_path, last_model_path = _build_checkpoint_paths(config)
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -190,6 +181,14 @@ def train_model(dataset: tuple, config: dict, use_optuna: bool = True, continue_
     batch_size = estimate_batch_size(final_model, train_dataset, config)
     config["training"]["batch_size"] = batch_size
     logger.info("Batch size definitivo: %s", batch_size)
+    log_runtime_context(
+        logger,
+        "Configuracion final de entrenamiento",
+        runtime,
+        batch_size=batch_size,
+        num_workers=int(config["training"]["num_workers"]),
+        prefetch_factor=int(config["training"]["prefetch_factor"]) if int(config["training"]["num_workers"]) > 0 else None,
+    )
 
     trainer = _create_trainer(config, best_model_path)
     trainer.fit(

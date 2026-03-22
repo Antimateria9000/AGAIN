@@ -12,6 +12,7 @@ from app.config_loader import get_default_config_path, load_benchmark_tickers, l
 from app.plot_utils import build_stock_plot
 from app.services import BenchmarkService, ForecastService, TrainingService
 from scripts.runtime_config import ConfigManager
+from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.logging_utils import configure_logging
 from scripts.utils.model_registry import get_active_profile_path, set_active_profile_path
 from scripts.utils.training_universe import build_runtime_training_config
@@ -266,6 +267,29 @@ def _render_active_model_summary(config: dict):
             st.sidebar.write(f"Universo: {len(final_tickers)} tickers")
 
 
+def _render_runtime_status(title: str, runtime_status: dict):
+    st.markdown(f"### {title}")
+    st.write(f"Dispositivo actual: **{runtime_status['backend']}**")
+    st.write(f"CUDA disponible: **{'Si' if runtime_status['cuda_available'] else 'No'}**")
+    st.write(f"GPU detectada: **{runtime_status['gpu_name']}**")
+    st.write(f"Torch: **{runtime_status['torch_version']}**")
+    st.write(f"CUDA segun torch: **{runtime_status['torch_cuda_version']}**")
+    st.write(f"Precision efectiva: **{runtime_status['precision']}**")
+    if runtime_status.get("fallback_reason"):
+        st.warning(f"Motivo del fallback a CPU: {runtime_status['fallback_reason']}")
+
+
+def _render_sidebar_runtime_status(config: dict):
+    runtime = resolve_execution_context(config, purpose="predict").to_display_dict()
+    st.sidebar.markdown("### Hardware de ejecucion")
+    st.sidebar.write(f"Dispositivo: `{runtime['backend']}`")
+    st.sidebar.write(f"GPU: `{runtime['gpu_name']}`")
+    st.sidebar.write(f"torch: `{runtime['torch_version']}`")
+    st.sidebar.write(f"CUDA torch: `{runtime['torch_cuda_version']}`")
+    if runtime.get("fallback_reason"):
+        st.sidebar.caption(runtime["fallback_reason"])
+
+
 def _render_training_result_summary():
     summary = st.session_state.get("training_result_summary")
     if not summary:
@@ -333,11 +357,17 @@ def _render_training_view(base_config: dict, training_service: TrainingService):
         st.write(f"Etiqueta: {universe.label}")
         st.write(f"Modelo previsto: `{runtime_config['model_name']}`")
         st.write("Tickers solicitados:", ", ".join(universe.tickers))
+        _render_runtime_status("Hardware de entrenamiento", training_service.get_runtime_status(runtime_config))
     except Exception as exc:
         st.error(f"Configuracion de entrenamiento invalida: {exc}")
         return
 
     st.info("El entrenamiento desde Streamlit se lanza desde cero para evitar mezclar artefactos de universos distintos.")
+    runtime_status = training_service.get_runtime_status(runtime_config)
+    if runtime_status["backend"] == "CPU":
+        st.warning("CUDA no esta disponible. El entrenamiento se ejecutara en CPU y puede ser muy lento.")
+    else:
+        st.success(f"El entrenamiento se lanzara usando GPU: {runtime_status['gpu_name']}")
     if st.button("Entrenar universo seleccionado", type="primary"):
         with st.spinner("Entrenando modelo..."):
             try:
@@ -418,6 +448,7 @@ def main():
     st.session_state.historical_period_days = historical_period_options[selected_period]
 
     _render_active_model_summary(config)
+    _render_sidebar_runtime_status(config)
 
     forecast_service = _get_forecast_service(st.session_state.selected_config_path, years)
     benchmark_service = _get_benchmark_service(st.session_state.selected_config_path, years)

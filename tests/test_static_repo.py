@@ -30,6 +30,7 @@ class StaticRepoTests(unittest.TestCase):
 
     def test_requirements_are_pinned_and_clean(self):
         requirements_text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        cuda_requirements_text = (ROOT / "requirements-torch-cu128.txt").read_text(encoding="utf-8")
         for dependency in (
             "lightning==",
             "pytorch-forecasting==",
@@ -39,13 +40,15 @@ class StaticRepoTests(unittest.TestCase):
             "pyarrow==",
         ):
             self.assertIn(dependency, requirements_text)
+        self.assertIn("torch==2.7.0", cuda_requirements_text)
+        self.assertIn("download.pytorch.org/whl/cu128", cuda_requirements_text)
         for removed_dependency in ("aiohttp", "nest_asyncio", "fredapi", "python-dotenv", "pandas-datareader"):
             self.assertNotIn(removed_dependency, requirements_text)
 
     def test_readme_matches_current_core_paths(self):
         readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("config/tickers_with_names.yaml", readme_text)
-        self.assertIn("streamlit run app/app.py", readme_text)
+        self.assertIn("streamlit run streamlit_app.py", readme_text)
         self.assertIn("benchmark_store.py", readme_text)
         self.assertIn("Smoke test del pipeline", readme_text)
         self.assertNotIn("config/tickers.yaml", readme_text)
@@ -79,6 +82,23 @@ class StaticRepoTests(unittest.TestCase):
             for token in forbidden_tokens:
                 self.assertNotIn(token, source, msg=f"{token} no deberia aparecer en {path}")
 
+    def test_resolucion_de_dispositivo_esta_centralizada(self):
+        runtime_files = [
+            ROOT / "start_training.py",
+            ROOT / "app" / "app.py",
+            ROOT / "app" / "services.py",
+            ROOT / "app" / "benchmark_utils.py",
+            ROOT / "scripts" / "train.py",
+            ROOT / "scripts" / "model.py",
+            ROOT / "scripts" / "prediction_engine.py",
+            ROOT / "scripts" / "utils" / "batch_size_estimator.py",
+        ]
+        for path in runtime_files:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotIn("torch.cuda.is_available()", source, msg=f"La deteccion CUDA debe centralizarse y no aparecer en {path}")
+        device_utils_source = (ROOT / "scripts" / "utils" / "device_utils.py").read_text(encoding="utf-8")
+        self.assertIn("torch.cuda.is_available()", device_utils_source)
+
     def test_key_python_modules_compile(self):
         files_to_check = [
             ROOT / "start_training.py",
@@ -93,6 +113,7 @@ class StaticRepoTests(unittest.TestCase):
             ROOT / "scripts" / "prediction_engine.py",
             ROOT / "scripts" / "train.py",
             ROOT / "scripts" / "utils" / "artifact_utils.py",
+            ROOT / "scripts" / "utils" / "device_utils.py",
             ROOT / "scripts" / "utils" / "lightning_compat.py",
             ROOT / "scripts" / "utils" / "model_registry.py",
             ROOT / "scripts" / "utils" / "training_universe.py",

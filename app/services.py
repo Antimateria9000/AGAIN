@@ -10,6 +10,7 @@ from app.benchmark_utils import run_benchmark
 from scripts.data_fetcher import DataFetcher
 from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
+from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.model_registry import list_model_profiles
 from scripts.utils.model_readiness import assess_model_readiness
 from scripts.utils.training_universe import resolve_training_universe
@@ -26,6 +27,9 @@ class ForecastService:
 
     def get_model_readiness(self):
         return assess_model_readiness(self.config)
+
+    def get_runtime_status(self):
+        return resolve_execution_context(self.config, purpose="predict").to_display_dict()
 
     def _ensure_model_ready(self):
         report = self.get_model_readiness()
@@ -81,6 +85,9 @@ class BenchmarkService:
     def get_model_readiness(self):
         return assess_model_readiness(self.config)
 
+    def get_runtime_status(self):
+        return resolve_execution_context(self.config, purpose="predict").to_display_dict()
+
     def run(self, benchmark_tickers, historical_period_days: int):
         report = self.get_model_readiness()
         if not report.ready:
@@ -116,6 +123,10 @@ class TrainingService:
 
     def list_registered_profiles(self) -> list[dict]:
         return list_model_profiles(self.base_config)
+
+    def get_runtime_status(self, config: dict | None = None):
+        target_config = config or self.base_config
+        return resolve_execution_context(target_config, purpose="train").to_display_dict()
 
     def train(
         self,

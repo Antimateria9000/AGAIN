@@ -5,6 +5,8 @@ import logging
 import torch
 from pytorch_forecasting import TimeSeriesDataSet
 
+from scripts.utils.device_utils import resolve_execution_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +30,7 @@ def _candidate_batch_sizes(config: dict) -> list[int]:
 
 def estimate_batch_size(model, dataset: TimeSeriesDataSet, config: dict) -> int:
     configured_batch_size = int(config["training"]["batch_size"])
+    runtime = resolve_execution_context(config, purpose="train")
     if not config["training"].get("auto_batch_size", False):
         logger.info("Auto-batch desactivado. Se usa %s", configured_batch_size)
         return configured_batch_size
@@ -38,7 +41,7 @@ def estimate_batch_size(model, dataset: TimeSeriesDataSet, config: dict) -> int:
     if not usable_candidates:
         usable_candidates = [1]
 
-    if not torch.cuda.is_available() or Tuner is None:
+    if not runtime.uses_cuda or Tuner is None:
         selected = min(configured_batch_size, usable_candidates[0]) if usable_candidates else 1
         logger.info("Se usa batch size conservador %s por falta de GPU o Tuner", selected)
         return max(1, selected)

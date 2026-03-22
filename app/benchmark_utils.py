@@ -15,6 +15,7 @@ from app.benchmark_store import ensure_database, load_benchmark_rows, save_bench
 from scripts.data_fetcher import DataFetcher
 from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
+from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.prediction_utils import compute_directional_accuracy, price_path_to_step_returns
 
 logger = logging.getLogger(__name__)
@@ -186,7 +187,7 @@ def run_benchmark(
         del model
         del dataset
         del normalizers
-        if torch.cuda.is_available():
+        if resolve_execution_context(config, purpose="predict").uses_cuda:
             torch.cuda.empty_cache()
 
     metrics_df = build_metrics_dataframe(all_results)
