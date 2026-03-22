@@ -9,7 +9,7 @@ import torch
 
 from scripts.model import CustomTemporalFusionTransformer
 from scripts.utils.artifact_utils import ensure_relative_to, verify_checksum, write_checksum, write_metadata
-from scripts.utils.data_schema import KNOWN_CATEGORICAL_FEATURES, NUMERIC_FEATURES, build_schema_hash
+from scripts.utils.data_schema import REQUIRED_NORMALIZER_KEYS, metadata_matches_active_schema
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +52,12 @@ def transfer_weights(old_checkpoint_path: str, new_model: CustomTemporalFusionTr
         raise FileNotFoundError(f"No existe el fichero de normalizadores {old_normalizers_path}")
 
     old_normalizers, old_metadata = _load_normalizer_payload(old_normalizers_path)
-    missing_numeric = set(NUMERIC_FEATURES) - set(old_normalizers.keys())
+    missing_numeric = set(REQUIRED_NORMALIZER_KEYS) - set(old_normalizers.keys())
     if missing_numeric:
         raise ValueError(f"Los normalizadores origen no cubren el esquema numerico actual: {sorted(missing_numeric)}")
 
     if old_metadata is not None:
-        expected_hash = build_schema_hash(config, old_metadata.get("numeric_features"), old_metadata.get("known_categoricals", KNOWN_CATEGORICAL_FEATURES))
-        if old_metadata.get("schema_hash") != expected_hash:
+        if not metadata_matches_active_schema(config, old_metadata):
             raise ValueError("Los normalizadores origen no son compatibles con la configuracion actual")
 
     normalizers_path.parent.mkdir(parents=True, exist_ok=True)

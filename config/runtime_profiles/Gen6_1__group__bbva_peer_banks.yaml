@@ -189,7 +189,7 @@ training_run:
   - SAN.MC
   - UCG.MI
   dropped_after_preprocessing: []
-  trained_at: '2026-03-22T11:13:55'
+  trained_at: '2026-03-22T12:11:30'
   years: 10
   prediction_horizon: 60
   label: BBVA + peer set bancario curado

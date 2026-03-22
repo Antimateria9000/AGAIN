@@ -16,9 +16,12 @@ from scripts.utils.data_schema import (
     LOG_FEATURES,
     MONTH_CATEGORIES,
     NUMERIC_FEATURES,
+    REQUIRED_NORMALIZER_KEYS,
+    REQUIRED_NUMERIC_COLUMNS,
     STATIC_CATEGORICALS,
     TARGET_COLUMN,
     build_artifact_metadata,
+    normalize_feature_list,
 )
 from scripts.utils.feature_engineer import FeatureEngineer
 
@@ -93,6 +96,9 @@ class DataPreprocessor:
             self.config,
             numeric_features=numeric_features,
             categorical_features=KNOWN_CATEGORICAL_FEATURES,
+            extra={
+                "normalizer_keys": normalize_feature_list([*numeric_features, TARGET_COLUMN]),
+            },
         )
 
     def _update_training_run_metadata(self, train_df: pd.DataFrame, val_df: pd.DataFrame) -> None:
@@ -114,8 +120,9 @@ class DataPreprocessor:
     def _apply_shared_transformations(self, df: pd.DataFrame, mode: str, ticker: str | None = None) -> tuple[pd.DataFrame, pd.Series | None, list[str]]:
         feature_engineer = FeatureEngineer()
         df = feature_engineer.add_features(df, sectors_list=self.config["model"]["sectors"])
+        required_numeric_columns = [feature for feature in REQUIRED_NUMERIC_COLUMNS if feature in df.columns]
         available_numeric_features = [feature for feature in NUMERIC_FEATURES if feature in df.columns]
-        df = self._drop_invalid_rows(df, available_numeric_features)
+        df = self._drop_invalid_rows(df, required_numeric_columns)
         if df.empty:
             raise ValueError("No quedan datos validos tras eliminar filas con NaN")
 
@@ -181,6 +188,12 @@ class DataPreprocessor:
             else:
                 normalizers = {}
 
+            target_normalizer = normalizers.get(TARGET_COLUMN)
+            if target_normalizer is None:
+                target_normalizer = TorchNormalizer()
+                target_normalizer.fit(train_df[TARGET_COLUMN].values)
+                normalizers[TARGET_COLUMN] = target_normalizer
+
             for feature in list(valid_numeric_features):
                 try:
                     if feature not in normalizers:
@@ -224,7 +237,7 @@ class DataPreprocessor:
                 static_categoricals=STATIC_CATEGORICALS,
                 time_varying_known_categoricals=KNOWN_CATEGORICAL_FEATURES,
                 time_varying_unknown_reals=valid_numeric_features,
-                target_normalizer=normalizers.get(TARGET_COLUMN, TorchNormalizer()),
+                target_normalizer=target_normalizer,
                 allow_missing_timesteps=True,
                 add_encoder_length=False,
                 categorical_encoders=categorical_encoders,
@@ -240,6 +253,12 @@ class DataPreprocessor:
 
         if not normalizers:
             raise ValueError("Los normalizadores son obligatorios en modo predict")
+
+        missing_required_normalizers = [feature for feature in REQUIRED_NORMALIZER_KEYS if feature not in normalizers]
+        if missing_required_normalizers:
+            raise ValueError(
+                f"Faltan normalizadores obligatorios para la inferencia: {missing_required_normalizers}"
+            )
 
         for feature in numeric_features:
             if feature in df.columns and feature in normalizers:

@@ -16,14 +16,15 @@ NUMERIC_FEATURES = [
     "Momentum_20d",
     "Close_to_MA_ratio",
     "Close_to_BB_upper",
-    TARGET_COLUMN,
 ]
+REQUIRED_NUMERIC_COLUMNS = [*NUMERIC_FEATURES, TARGET_COLUMN]
+REQUIRED_NORMALIZER_KEYS = [*NUMERIC_FEATURES, TARGET_COLUMN]
 KNOWN_CATEGORICAL_FEATURES = ["Day_of_Week", "Month"]
 STATIC_CATEGORICALS = ["Sector"]
 DAY_OF_WEEK_CATEGORIES = [str(i) for i in range(7)]
 MONTH_CATEGORIES = [str(i) for i in range(1, 13)]
 LOG_FEATURES = ["Close", "Volume", "MA10", "MA50", "VWAP"]
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def resolve_embedding_sizes(config: Dict[str, Any]) -> Dict[str, List[int]]:
@@ -53,11 +54,14 @@ def build_schema_payload(
         "schema_version": SCHEMA_VERSION,
         "target": TARGET_COLUMN,
         "numeric_features": numeric,
+        "required_numeric_columns": list(REQUIRED_NUMERIC_COLUMNS),
+        "required_normalizer_keys": list(REQUIRED_NORMALIZER_KEYS),
         "known_categoricals": categoricals,
         "static_categoricals": list(STATIC_CATEGORICALS),
         "day_of_week_categories": list(DAY_OF_WEEK_CATEGORIES),
         "month_categories": list(MONTH_CATEGORIES),
         "log_features": list(LOG_FEATURES),
+        "target_manually_normalized": False,
         "embedding_sizes": resolve_embedding_sizes(config),
         "sectors": list(config["model"]["sectors"]),
         "max_encoder_length": config["model"]["max_encoder_length"],
@@ -102,6 +106,12 @@ def build_artifact_metadata(
     if extra:
         metadata.update(extra)
     return metadata
+
+
+def metadata_matches_active_schema(config: Dict[str, Any], metadata: Dict[str, Any] | None) -> bool:
+    if not metadata:
+        return False
+    return metadata.get("schema_hash") == build_schema_hash(config)
 
 
 def normalize_feature_list(features: Iterable[str]) -> List[str]:

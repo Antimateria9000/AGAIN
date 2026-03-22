@@ -13,13 +13,18 @@ from scripts.config_manager import ConfigManager
 from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
 from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
-from scripts.utils.data_schema import KNOWN_CATEGORICAL_FEATURES, NUMERIC_FEATURES, STATIC_CATEGORICALS, TARGET_COLUMN, build_schema_hash
+from scripts.utils.data_schema import (
+    KNOWN_CATEGORICAL_FEATURES,
+    NUMERIC_FEATURES,
+    STATIC_CATEGORICALS,
+    TARGET_COLUMN,
+    metadata_matches_active_schema,
+)
 from scripts.utils.device_utils import get_inference_autocast_context, log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import LIGHTNING_LOGGER_NAME
 from scripts.utils.prediction_utils import (
     accumulate_quantile_price_paths,
     denormalize_logged_close,
-    inverse_transform_if_available,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,10 +34,7 @@ def _validate_schema_metadata(config: dict, metadata: dict | None, artifact_name
     if metadata is None:
         logger.warning(f"El artefacto {artifact_name} no tiene metadatos de esquema. No se puede validar por completo.")
         return
-    expected_numeric = metadata.get('numeric_features')
-    expected_categoricals = metadata.get('known_categoricals')
-    expected_hash = build_schema_hash(config, expected_numeric, expected_categoricals)
-    if metadata.get('schema_hash') != expected_hash:
+    if not metadata_matches_active_schema(config, metadata):
         raise ValueError(f"El artefacto {artifact_name} no es compatible con la configuracion actual")
 
 
@@ -208,8 +210,6 @@ def generate_predictions(config, dataset, model, ticker_data, return_details: bo
         pred_array = pred_array.detach().float().cpu().numpy()
 
     target_normalizer = dataset.target_normalizer
-    pred_array = inverse_transform_if_available(target_normalizer, torch.from_numpy(pred_array))
-
     config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
     normalizers = config_manager.load_normalizers(config['model_name'], required=True)
     close_normalizer = normalizers.get('Close', target_normalizer)

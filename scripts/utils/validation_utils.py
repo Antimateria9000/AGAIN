@@ -63,14 +63,9 @@ def create_validation_plot(y_hat_denorm, y_target_denorm, batch_idx, logs_dir, c
 
 
 def log_validation_details(x, y_hat, y_target, batch_idx, normalizers, dataset, save_plots, plot_count, max_plots_per_epoch, logs_dir, current_epoch):
-    relative_returns_normalizer = normalizers.get('Relative_Returns') or dataset.target_normalizer
-    if relative_returns_normalizer is None:
-        logger.warning("No existe normalizador para Relative_Returns")
-        return
-
     try:
-        y_hat_denorm = relative_returns_normalizer.inverse_transform(y_hat.float().cpu())
-        y_target_denorm = relative_returns_normalizer.inverse_transform(y_target.float().cpu())
+        y_hat_denorm = y_hat.float().cpu()
+        y_target_denorm = y_target.float().cpu()
         if 'encoder_cont' in x:
             encoder_cont = x['encoder_cont'][0].cpu()
             close_normalizer = normalizers.get('Close')

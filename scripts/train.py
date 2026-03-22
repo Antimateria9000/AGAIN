@@ -12,7 +12,7 @@ from pytorch_forecasting import TimeSeriesDataSet
 from scripts.model import build_model
 from scripts.utils.artifact_utils import ensure_relative_to, verify_checksum, write_checksum, write_metadata
 from scripts.utils.batch_size_estimator import estimate_batch_size
-from scripts.utils.data_schema import build_artifact_metadata, build_schema_hash
+from scripts.utils.data_schema import build_artifact_metadata, metadata_matches_active_schema
 from scripts.utils.device_utils import log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import CSVLogger, EarlyStopping, pl
 
@@ -61,8 +61,7 @@ def _validate_checkpoint_metadata(config: dict, checkpoint: dict, checkpoint_pat
     if metadata is None:
         logger.warning("El checkpoint %s no tiene metadatos de esquema.", checkpoint_path)
         return
-    expected_hash = build_schema_hash(config, metadata.get("numeric_features"), metadata.get("known_categoricals"))
-    if metadata.get("schema_hash") != expected_hash:
+    if not metadata_matches_active_schema(config, metadata):
         raise ValueError(f"El checkpoint {checkpoint_path} no es compatible con la configuracion actual")
 
 

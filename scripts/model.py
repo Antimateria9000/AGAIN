@@ -170,14 +170,10 @@ class CustomTemporalFusionTransformer(LightningModule):
 
             if self.save_plots and self.plot_count < self.max_plots_per_epoch:
                 try:
-                    relative_returns_normalizer = self.normalizers.get("Relative_Returns") or self.dataset.target_normalizer
-                    if relative_returns_normalizer:
-                        y_hat_denorm = relative_returns_normalizer.inverse_transform(y_hat.float().cpu())
-                        y_target_denorm = relative_returns_normalizer.inverse_transform(y_target.float().cpu())
-                        create_validation_plot(y_hat_denorm, y_target_denorm, batch_idx, self.logs_dir, self.current_epoch)
-                        self.plot_count += 1
-                    else:
-                        logger.warning("No existe normalizador para Relative_Returns")
+                    y_hat_denorm = y_hat.float().cpu()
+                    y_target_denorm = y_target.float().cpu()
+                    create_validation_plot(y_hat_denorm, y_target_denorm, batch_idx, self.logs_dir, self.current_epoch)
+                    self.plot_count += 1
                 except Exception as exc:
                     logger.error("Error al crear grafico de validacion: %s", exc)
 

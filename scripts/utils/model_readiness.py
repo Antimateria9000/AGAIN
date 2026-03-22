@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from scripts.utils.artifact_utils import ensure_relative_to, read_metadata, verify_checksum
-from scripts.utils.data_schema import build_schema_hash
+from scripts.utils.data_schema import metadata_matches_active_schema
 
 
 @dataclass
@@ -18,10 +18,7 @@ class ModelReadinessReport:
 
 
 def _schema_matches(config: dict, metadata: dict | None) -> bool:
-    if not metadata:
-        return False
-    expected_hash = build_schema_hash(config, metadata.get("numeric_features"), metadata.get("known_categoricals"))
-    return metadata.get("schema_hash") == expected_hash
+    return metadata_matches_active_schema(config, metadata)
 
 
 def _load_checkpoint_metadata(model_path: Path) -> dict | None:
