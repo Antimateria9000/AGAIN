@@ -17,22 +17,38 @@ from scripts.utils.feature_engineer import FeatureEngineer
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("logs/data_analysis.log"), logging.StreamHandler()],
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
+
+def _ensure_file_logger(log_file: Path) -> None:
+    """Attach a single file handler for this module once the log directory exists."""
+    resolved_log_file = log_file.resolve()
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == resolved_log_file:
+            return
+
+    file_handler = logging.FileHandler(resolved_log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
 
 
 class DataAnalyzer:
     def __init__(self, config: dict, years: int = 10):
         self.config = config
         self.years = years
-        self.config_manager = ConfigManager()
+        config_path = self.config.get("_meta", {}).get("config_path")
+        self.config_manager = ConfigManager(config_path) if config_path else ConfigManager()
+        self.config_manager.config = self.config
         self.model_name = config["model_name"]
+        self.output_dir = Path(self.config["paths"]["logs_dir"]) / "debug"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_file_logger(self.output_dir.parent / "data_analysis.log")
         self.data_fetcher = DataFetcher(self.config_manager, years=years)
         self.data_preprocessor = DataPreprocessor(self.config)
         self.feature_engineer = FeatureEngineer()
-        self.output_dir = Path(self.config["paths"]["logs_dir"]) / "debug"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.normalized_numeric_features = list(NUMERIC_FEATURES)
         self.analysis_features = [*NUMERIC_FEATURES, TARGET_COLUMN]
 
