@@ -161,6 +161,32 @@ artifacts:
             index=index,
         )
 
+    @staticmethod
+    def _chart_payload() -> dict:
+        return {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"exchangeTimezoneName": "Europe/Madrid"},
+                        "timestamp": [1704153600, 1704240000, 1704326400],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [100.0, 101.0, 102.0],
+                                    "high": [101.0, 102.0, 103.0],
+                                    "low": [99.0, 100.0, 101.0],
+                                    "close": [100.5, 101.5, 102.5],
+                                    "volume": [1_000_000, 1_100_000, 1_200_000],
+                                }
+                            ],
+                            "adjclose": [{"adjclose": [100.5, 101.5, 102.5]}],
+                        },
+                    }
+                ],
+                "error": None,
+            }
+        }
+
     def test_provider_cambia_al_backend_download_si_ticker_falla(self):
         with mock.patch("scripts.utils.yfinance_provider.yf.Ticker") as ticker_cls, mock.patch(
             "scripts.utils.yfinance_provider.yf.download"
@@ -296,6 +322,40 @@ artifacts:
         self.assertFalse(result.data.empty)
         self.assertEqual(result.metadata.backend_used, "ticker")
         reset_mock.assert_called_once()
+
+    def test_provider_usa_chart_http_directo_si_yfinance_falla_por_rate_limit(self):
+        provider = YFinanceProvider(max_workers=1, retries=1, min_delay=0.0, timeout=1.0, auto_reset_cookie_cache=False)
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return DataFetcherProviderTests._chart_payload()
+
+        fake_session = mock.Mock()
+        fake_session.get.return_value = FakeResponse()
+        fake_session.headers = {}
+        fake_session.proxies = {}
+        fake_session.trust_env = False
+
+        with mock.patch.object(provider, "_download_via_ticker", side_effect=YFRateLimitError()), mock.patch.object(
+            provider, "_download_via_download", side_effect=YFRateLimitError()
+        ), mock.patch("scripts.utils.yfinance_provider.requests.Session", return_value=fake_session):
+            result = provider.get_history_bundle(
+                symbols="BBVA.MC",
+                start=pd.Timestamp("2024-01-01"),
+                end=pd.Timestamp("2024-01-10"),
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+
+        self.assertFalse(result.data.empty)
+        self.assertEqual(result.metadata.backend_used, "direct_chart")
+        self.assertEqual(list(result.data.columns), ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividends", "Stock Splits"])
 
     def test_fetch_many_stocks_reporta_el_detalle_real_del_provider(self):
         fetcher = DataFetcher(self.config_manager, years=1)

@@ -16,6 +16,7 @@ from uuid import uuid4
 import pandas as pd
 import requests
 import yfinance as yf
+from yfinance import utils as yf_utils
 from yfinance.exceptions import YFRateLimitError
 
 try:
@@ -88,6 +89,10 @@ PROXY_ENV_KEYS = (
 )
 PROXY_ENV_LOCK = RLock()
 ALLOWED_SESSION_BACKENDS = {"requests", "curl_cffi"}
+DIRECT_CHART_URLS = (
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+    "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
+)
 
 
 class YFinanceProviderError(Exception):
@@ -723,6 +728,154 @@ class YFinanceProvider:
                     raw = yf.download(**kwargs)
             return _flatten_columns_if_needed(raw, symbol)
 
+    @staticmethod
+    def _timestamp_to_unix_seconds(ts: Optional[pd.Timestamp]) -> Optional[int]:
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            return int(ts.tz_localize("UTC").timestamp())
+        return int(ts.tz_convert("UTC").timestamp())
+
+    def _direct_chart_params(
+        self,
+        start: Optional[pd.Timestamp],
+        end: Optional[pd.Timestamp],
+        interval: str,
+    ) -> dict:
+        params = {
+            "interval": interval,
+            "includePrePost": False,
+            "events": "div,splits,capitalGains",
+        }
+        period1 = self._timestamp_to_unix_seconds(start)
+        period2 = self._timestamp_to_unix_seconds(end)
+        if period1 is not None:
+            params["period1"] = period1
+        if period2 is not None:
+            params["period2"] = period2
+        return params
+
+    def _parse_direct_chart_payload(
+        self,
+        payload: dict,
+        symbol: str,
+        interval: str,
+        actions: bool,
+    ) -> pd.DataFrame:
+        chart = payload.get("chart") or {}
+        if chart.get("error"):
+            description = chart["error"].get("description", "error desconocido de Yahoo")
+            raise DownloadFailureError(f"Yahoo chart API devolvio un error para {symbol}: {description}")
+
+        results = chart.get("result") or []
+        if not results:
+            raise EmptyDatasetError(f"Yahoo chart API no devolvio resultados para {symbol}")
+
+        result = results[0]
+        try:
+            quotes = yf_utils.parse_quotes(result)
+        except Exception as exc:
+            raise DownloadFailureError(f"No se ha podido parsear el payload chart de Yahoo para {symbol}: {exc}") from exc
+
+        if quotes is None or quotes.empty:
+            raise EmptyDatasetError(f"Yahoo chart API no devolvio OHLCV util para {symbol}")
+
+        exchange_tz = (result.get("meta") or {}).get("exchangeTimezoneName")
+        if exchange_tz:
+            quotes = yf_utils.set_df_tz(quotes, interval, exchange_tz)
+
+        if actions:
+            try:
+                dividends, splits, _capital_gains = yf_utils.parse_actions(result)
+            except Exception:
+                dividends = pd.DataFrame(columns=["Dividends"], index=pd.DatetimeIndex([]))
+                splits = pd.DataFrame(columns=["Stock Splits"], index=pd.DatetimeIndex([]))
+
+            if exchange_tz:
+                if dividends is not None and not dividends.empty:
+                    dividends = yf_utils.set_df_tz(dividends, interval, exchange_tz)
+                if splits is not None and not splits.empty:
+                    splits = yf_utils.set_df_tz(splits, interval, exchange_tz)
+
+            if dividends is not None and not dividends.empty:
+                quotes = quotes.join(dividends, how="left")
+            if splits is not None and not splits.empty:
+                quotes = quotes.join(splits, how="left")
+
+        return quotes
+
+    def _auto_adjust_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty or "Adj Close" not in df.columns or "Close" not in df.columns:
+            return df
+
+        adjusted = df.copy()
+        close = pd.to_numeric(adjusted["Close"], errors="coerce")
+        adj_close = pd.to_numeric(adjusted["Adj Close"], errors="coerce")
+        ratio = adj_close / close
+        ratio = ratio.replace([float("inf"), float("-inf")], pd.NA)
+
+        for column in ("Open", "High", "Low", "Close"):
+            if column in adjusted.columns:
+                values = pd.to_numeric(adjusted[column], errors="coerce")
+                adjusted[column] = values * ratio
+        adjusted["Adj Close"] = adj_close
+        return adjusted
+
+    def _download_via_direct_chart(
+        self,
+        symbol: str,
+        start: Optional[pd.Timestamp],
+        end: Optional[pd.Timestamp],
+        interval: str,
+        auto_adjust: bool,
+        actions: bool,
+    ) -> pd.DataFrame:
+        params = self._direct_chart_params(start, end, interval)
+        last_rate_limit_error: Optional[Exception] = None
+        last_error: Optional[Exception] = None
+
+        with self._proxy_env_scope():
+            session = requests.Session()
+            session.trust_env = self.trust_env_proxies
+            session.headers.update(
+                {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+                    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+                }
+            )
+            if not self.trust_env_proxies:
+                session.proxies = {}
+
+            for base_url in DIRECT_CHART_URLS:
+                try:
+                    response = session.get(
+                        base_url.format(symbol=symbol),
+                        params=params,
+                        timeout=self.timeout,
+                    )
+                    if response.status_code == 429:
+                        last_rate_limit_error = YFRateLimitError("Too Many Requests. Rate limited. Try after a while.")
+                        continue
+                    response.raise_for_status()
+                    payload = response.json()
+                    frame = self._parse_direct_chart_payload(payload, symbol, interval, actions=actions)
+                    if auto_adjust:
+                        frame = self._auto_adjust_frame(frame)
+                    return frame
+                except YFRateLimitError as exc:
+                    last_rate_limit_error = exc
+                except requests.HTTPError as exc:
+                    last_error = exc
+                except Exception as exc:
+                    last_error = exc
+
+        if last_rate_limit_error is not None:
+            raise last_rate_limit_error
+        if last_error is not None:
+            raise last_error
+        raise DownloadFailureError(f"No se ha podido descargar {symbol} mediante chart HTTP directo")
+
     def _prepare_request_window(
         self,
         interval: str,
@@ -828,6 +981,8 @@ class YFinanceProvider:
             raw = self._download_via_ticker(symbol, start, end, interval, auto_adjust, actions)
         elif backend == "download":
             raw = self._download_via_download(symbol, start, end, interval, auto_adjust, actions)
+        elif backend == "direct_chart":
+            raw = self._download_via_direct_chart(symbol, start, end, interval, auto_adjust, actions)
         else:
             raise ProviderConfigurationError(f"Backend no soportado: {backend!r}")
         return self._normalize_raw_history(raw, symbol, interval)
@@ -933,7 +1088,7 @@ class YFinanceProvider:
         if self.min_delay > 0:
             time.sleep(self.min_delay * random.uniform(0.5, 1.5))
 
-        backends = ("ticker", "download")
+        backends = ("ticker", "download", "direct_chart")
         last_error: Optional[Exception] = None
         reset_done = False
 
