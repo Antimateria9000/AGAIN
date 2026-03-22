@@ -63,6 +63,18 @@ def read_metadata(path: Path) -> dict | None:
     return json.loads(sidecar.read_text(encoding="utf-8"))
 
 
+def write_json_artifact(path: Path, payload: dict) -> Path:
+    ensure_parent_dir(path)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def read_json_artifact(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def ensure_relative_to(path: Path, base_dir: Path) -> None:
     resolved_path = path.resolve()
     resolved_base = base_dir.resolve()

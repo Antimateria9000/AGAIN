@@ -1,6 +1,7 @@
 groups:
   bbva_peer_banks:
     label: "BBVA + peer set bancario curado"
+    anchor_ticker: BBVA.MC
     description: "Universo bancario europeo curado para entrenar BBVA frente a peers comparables."
     notes: "Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial acotado."
     enabled: true

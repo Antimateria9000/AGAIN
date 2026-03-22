@@ -17,6 +17,7 @@ from scripts.model import build_model
 from scripts.preprocessor import DataPreprocessor
 from scripts.runtime_config import ConfigManager
 from scripts.train import train_model
+from scripts.utils.artifact_utils import write_json_artifact
 from scripts.utils.device_utils import log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import seed_everything
 from scripts.utils.logging_utils import configure_logging
@@ -115,6 +116,66 @@ def _persist_runtime_profile(config: dict) -> Path:
     return profile_path
 
 
+def _build_universe_report_path(config: dict) -> Path:
+    raw_data_path = Path(config["data"]["raw_data_path"])
+    return raw_data_path.with_name(f"{raw_data_path.stem}__integrity_report.json")
+
+
+def _build_staged_raw_data_path(config: dict) -> Path:
+    raw_data_path = Path(config["data"]["raw_data_path"])
+    return raw_data_path.with_name(f"{raw_data_path.stem}__staging{raw_data_path.suffix}")
+
+
+def _persist_universe_snapshot(config: dict, df, report) -> None:
+    training_run = dict(config.get("training_run") or {})
+    report_path = _build_universe_report_path(config)
+    staged_raw_data_path = _build_staged_raw_data_path(config)
+    payload = report.to_dict()
+    payload["saved_at"] = training_run.get("trained_at")
+    write_json_artifact(report_path, payload)
+    training_run["universe_integrity_report_path"] = str(report_path)
+
+    if df is not None and not df.empty:
+        staged_raw_data_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(staged_raw_data_path, index=False)
+        training_run["raw_data_staging_path"] = str(staged_raw_data_path)
+        logger.info("Snapshot bruto del universo guardado en %s", staged_raw_data_path)
+
+        if report.can_promote_canonical:
+            canonical_path = Path(config["data"]["raw_data_path"])
+            canonical_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(staged_raw_data_path, canonical_path)
+            training_run["raw_data_promoted"] = True
+            training_run["raw_data_artifact_path"] = str(canonical_path)
+            logger.info("Dataset bruto promovido a ruta canonica: %s", canonical_path)
+        else:
+            training_run["raw_data_promoted"] = False
+            training_run["raw_data_artifact_path"] = str(staged_raw_data_path)
+            logger.warning(
+                "El universo no se promociona como dataset canonico. decision=%s | summary=%s",
+                report.decision,
+                report.summary,
+            )
+
+    config["training_run"] = training_run
+
+
+def _record_universe_report(config: dict, report, *, stage: str) -> None:
+    training_run = dict(config.get("training_run") or {})
+    report_payload = report.to_dict()
+    training_run["universe_integrity"] = report_payload
+    if stage == "download":
+        training_run["download_universe_integrity"] = report_payload
+    elif stage == "preprocessed":
+        training_run["preprocessed_universe_integrity"] = report_payload
+    training_run["downloaded_tickers"] = list(report.successful_tickers)
+    training_run["discarded_tickers"] = list(report.discarded_tickers)
+    training_run["discarded_details"] = dict(report.discarded_details)
+    training_run["integrity_decision"] = report.decision
+    training_run["integrity_summary"] = report.summary
+    config["training_run"] = training_run
+
+
 def _register_training_result(config: dict, profile_path: Path | None) -> None:
     training_run = dict(config.get("training_run") or {})
     profile_entry = {
@@ -175,6 +236,13 @@ def _resolve_training_config(
         "discarded_details": {},
         "final_tickers_used": [],
         "dropped_after_preprocessing": [],
+        "anchor_ticker": None,
+        "universe_integrity": {},
+        "download_universe_integrity": {},
+        "preprocessed_universe_integrity": {},
+        "universe_integrity_report_path": None,
+        "raw_data_staging_path": None,
+        "raw_data_promoted": False,
         "trained_at": None,
         "years": int(years),
         "prediction_horizon": int(config["model"]["max_prediction_length"]),
@@ -188,44 +256,29 @@ def _resolve_training_config(
     return base_manager, config, None
 
 
-def _fetch_training_dataframe(config_manager: ConfigManager, config: dict, years: int) -> tuple[Any, list[str], list[str]]:
+def _fetch_training_dataframe(config_manager: ConfigManager, config: dict, years: int) -> tuple[Any, list[str], list[str], Any]:
     fetcher = DataFetcher(config_manager, years=years)
     logger.info("Descargando datos de mercado...")
 
-    training_mode = config.get("training_run", {}).get("mode")
-    if training_mode in {"single_ticker", "predefined_group"}:
-        df, report = fetcher.fetch_training_universe(config["data"]["tickers"])
-        requested_tickers = report.requested_tickers
-        downloaded_tickers = report.successful_tickers
-        discarded_tickers = report.discarded_tickers
-        config["training_run"]["downloaded_tickers"] = list(downloaded_tickers)
-        config["training_run"]["discarded_tickers"] = list(discarded_tickers)
-        config["training_run"]["discarded_details"] = dict(report.discarded_details)
-        config["data"]["tickers"] = list(downloaded_tickers)
+    df, report = fetcher.fetch_training_universe(config["data"]["tickers"])
+    requested_tickers = report.requested_tickers
+    downloaded_tickers = report.successful_tickers
+    _record_universe_report(config, report, stage="download")
+    config["data"]["tickers"] = list(downloaded_tickers)
 
-        if training_mode == "single_ticker" and not downloaded_tickers:
-            ticker = config["training_run"].get("single_ticker_symbol") or "ticker solicitado"
-            raise ValueError(f"No se han podido descargar datos validos para {ticker}")
+    for ticker in report.discarded_tickers:
+        detail = report.discarded_details.get(ticker, "Sin detalle")
+        logger.warning("Ticker descartado durante la descarga: %s (%s)", ticker, detail)
 
-        if training_mode == "predefined_group":
-            minimum_group_tickers = int(config["training_universe"]["minimum_group_tickers"])
-            if len(downloaded_tickers) < minimum_group_tickers:
-                raise ValueError(
-                    f"El grupo seleccionado se queda sin universo suficiente tras la descarga: "
-                    f"se han obtenido {len(downloaded_tickers)} tickers y se requieren al menos {minimum_group_tickers}"
-                )
-            for ticker in discarded_tickers:
-                detail = report.discarded_details.get(ticker, "Sin detalle")
-                logger.warning("Ticker descartado durante la descarga: %s (%s)", ticker, detail)
+    _persist_universe_snapshot(config, df, report)
 
-        return df, requested_tickers, downloaded_tickers
+    if not report.training_allowed:
+        reasons = " | ".join(report.decision_reasons) if report.decision_reasons else report.summary
+        raise ValueError(f"Universo de entrenamiento invalido: {report.decision}. {reasons}")
+    if report.degraded:
+        logger.warning("Se continuara con un universo degradado explicitamente permitido: %s", report.summary)
 
-    df = fetcher.fetch_global_stocks(region=None)
-    if df.empty:
-        raise ValueError("No se han podido descargar datos de mercado")
-    requested = list(config["data"]["tickers"])
-    config["training_run"]["downloaded_tickers"] = requested
-    return df, requested, requested
+    return df, requested_tickers, downloaded_tickers, report
 
 
 def start_training(
@@ -255,17 +308,12 @@ def start_training(
     training_runtime = resolve_execution_context(config, purpose="train")
     log_runtime_context(logger, "Inicio del entrenamiento", training_runtime)
 
-    df, requested_tickers, downloaded_tickers = _fetch_training_dataframe(config_manager, config, years)
+    df, requested_tickers, downloaded_tickers, _ = _fetch_training_dataframe(config_manager, config, years)
     if df.empty:
         raise ValueError("No se han podido descargar datos de mercado")
 
     if profile_path is not None:
         _persist_runtime_profile(config)
-
-    data_path = Path(config["data"]["raw_data_path"])
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(data_path, index=False)
-    logger.info("Datos guardados en %s", data_path)
 
     logger.info("Preprocesando datos...")
     model_name = config["model_name"]

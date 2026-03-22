@@ -61,6 +61,16 @@ training:
 
 training_universe:
   minimum_group_tickers: 2
+  minimum_group_tickers_abs: 2
+  minimum_group_coverage_ratio: 0.8
+  minimum_rows_per_ticker: 241
+  minimum_common_overlap_days: 80
+  abort_if_anchor_missing: true
+  abort_if_too_many_fallback_tickers: true
+  abort_on_cached_backfill: false
+  allow_degraded_universe: false
+  maximum_fallback_tickers: 0
+  maximum_fallback_ratio: 0.0
 
 prediction:
   years: 3
@@ -96,6 +106,9 @@ data_fetch:
   use_yfinance_sector_lookup: false
   session_backend: requests
   yfinance_cache_dir: data/cache/yfinance
+  rate_limit_cooldown_seconds: 8.0
+  rate_limit_circuit_breaker_threshold: 2
+  rate_limit_circuit_breaker_seconds: 30.0
 
 paths:
   data_dir: data

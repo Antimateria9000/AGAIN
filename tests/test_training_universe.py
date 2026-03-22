@@ -121,6 +121,7 @@ class TrainingUniverseTests(unittest.TestCase):
             "groups:\n"
             "  bbva_peer_banks:\n"
             "    label: BBVA + peer set bancario curado\n"
+            "    anchor_ticker: BBVA.MC\n"
             "    description: Grupo bancario\n"
             "    notes: Curado\n"
             "    enabled: true\n"
@@ -145,6 +146,7 @@ class TrainingUniverseTests(unittest.TestCase):
         self.assertEqual(universe.mode, "predefined_group")
         self.assertEqual(universe.predefined_group_name, "bbva_peer_banks")
         self.assertEqual(universe.tickers, ["BBVA.MC", "SAN.MC"])
+        self.assertEqual(universe.anchor_ticker, "BBVA.MC")
 
     def test_error_if_group_does_not_exist(self):
         with self.assertRaises(ValueError):
@@ -252,3 +254,112 @@ class TrainingUniverseTests(unittest.TestCase):
         self.assertEqual(result.model_name, "Gen6_1__single__BBVA_MC")
         self.assertTrue(str(result.profile_path).endswith("Gen6_1__single__BBVA_MC.yaml"))
         self.assertEqual(get_active_profile_path(self.config), str(result.profile_path))
+
+    @mock.patch("start_training.train_model")
+    @mock.patch("start_training.DataPreprocessor")
+    @mock.patch("start_training.DataFetcher")
+    def test_start_training_aborta_si_el_universo_es_semanticamente_invalido(self, fetcher_cls, preprocessor_cls, train_model_mock):
+        sample_df = pd.DataFrame(
+            [
+                {
+                    "Date": pd.Timestamp("2024-01-02"),
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 1000,
+                    "Ticker": "SAN.MC",
+                    "Sector": "Financials",
+                }
+            ]
+        )
+        fetcher_cls.return_value.fetch_training_universe.return_value = (
+            sample_df,
+            FetchUniverseReport(
+                requested_tickers=["BBVA.MC", "SAN.MC"],
+                successful_tickers=["SAN.MC"],
+                discarded_tickers=["BBVA.MC"],
+                discarded_details={"BBVA.MC": "Falta el ticker ancla"},
+                decision="ABORT",
+                decision_reasons=["Falta el ticker ancla"],
+                training_allowed=False,
+                can_promote_canonical=False,
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            start_training(
+                config_path=str(self.root / "config" / "config.yaml"),
+                years=3,
+                use_optuna=False,
+                continue_training=False,
+                training_universe_mode="predefined_group",
+                predefined_group_name="bbva_peer_banks",
+            )
+
+        preprocessor_cls.return_value.process_data.assert_not_called()
+        train_model_mock.assert_not_called()
+        canonical_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data.csv"
+        self.assertFalse(canonical_raw.exists())
+
+    @mock.patch("start_training.train_model")
+    @mock.patch("start_training.DataPreprocessor")
+    @mock.patch("start_training.DataFetcher")
+    def test_start_training_marca_run_degradado_sin_promocionar_dataset_canonico(self, fetcher_cls, preprocessor_cls, train_model_mock):
+        sample_df = pd.DataFrame(
+            [
+                {
+                    "Date": pd.Timestamp("2024-01-02"),
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 1000,
+                    "Ticker": "BBVA.MC",
+                    "Sector": "Financials",
+                },
+                {
+                    "Date": pd.Timestamp("2024-01-02"),
+                    "Open": 12.0,
+                    "High": 13.0,
+                    "Low": 11.0,
+                    "Close": 12.5,
+                    "Volume": 1200,
+                    "Ticker": "SAN.MC",
+                    "Sector": "Financials",
+                },
+            ]
+        )
+        fetcher_cls.return_value.fetch_training_universe.return_value = (
+            sample_df,
+            FetchUniverseReport(
+                requested_tickers=["BBVA.MC", "SAN.MC"],
+                successful_tickers=["BBVA.MC", "SAN.MC"],
+                discarded_tickers=[],
+                discarded_details={},
+                fresh_tickers=["BBVA.MC"],
+                fallback_tickers=["SAN.MC"],
+                decision="DEGRADED_ALLOWED",
+                decision_reasons=["Universe degraded but explicitly allowed"],
+                training_allowed=True,
+                can_promote_canonical=False,
+                degraded=True,
+            ),
+        )
+        preprocessor_cls.return_value.process_data.return_value = ("train_dataset", "val_dataset")
+        train_model_mock.return_value = object()
+
+        result = start_training(
+            config_path=str(self.root / "config" / "config.yaml"),
+            years=3,
+            use_optuna=False,
+            continue_training=False,
+            training_universe_mode="predefined_group",
+            predefined_group_name="bbva_peer_banks",
+        )
+
+        canonical_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data.csv"
+        staging_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data__staging.csv"
+        self.assertFalse(canonical_raw.exists())
+        self.assertTrue(staging_raw.exists())
+        self.assertEqual(result.downloaded_tickers, ["BBVA.MC", "SAN.MC"])

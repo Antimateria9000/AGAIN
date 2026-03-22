@@ -165,10 +165,30 @@ training_run:
   - ISP.MI
   - UCG.MI
   - INGA.AS
-  downloaded_tickers: []
+  downloaded_tickers:
+  - BBVA.MC
+  - SAN.MC
+  - CABK.MC
+  - SAB.MC
+  - BKT.MC
+  - BNP.PA
+  - GLE.PA
+  - ISP.MI
+  - UCG.MI
+  - INGA.AS
   discarded_tickers: []
   discarded_details: {}
-  final_tickers_used: []
+  final_tickers_used:
+  - BBVA.MC
+  - BKT.MC
+  - BNP.PA
+  - CABK.MC
+  - GLE.PA
+  - INGA.AS
+  - ISP.MI
+  - SAB.MC
+  - SAN.MC
+  - UCG.MI
   dropped_after_preprocessing: []
   trained_at: '2026-03-22T20:25:05'
   years: 3

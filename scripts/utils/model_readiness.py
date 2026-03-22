@@ -34,8 +34,25 @@ def _load_normalizers_metadata(normalizers_path: Path) -> dict | None:
     return None
 
 
+def _universe_semantically_valid(metadata: dict | None) -> tuple[bool, str | None]:
+    if not metadata:
+        return True, None
+    training_run = dict(metadata.get("training_run") or {})
+    integrity = dict(training_run.get("universe_integrity") or {})
+    if not integrity:
+        return True, None
+    decision = str(integrity.get("decision") or "").strip().upper()
+    if not decision:
+        return True, None
+    if decision in {"ABORT", "DEGRADED_FORBIDDEN"} or integrity.get("training_allowed") is False:
+        reasons = integrity.get("decision_reasons") or [integrity.get("summary", "Sin detalle")]
+        return False, " | ".join(str(reason) for reason in reasons if str(reason))
+    return True, integrity.get("summary") if integrity.get("degraded") else None
+
+
 def assess_model_readiness(config: dict) -> ModelReadinessReport:
     issues: list[str] = []
+    warnings: list[str] = []
     artifacts_required = bool(config.get("artifacts", {}).get("require_hash_validation", True))
 
     model_path = Path(config["paths"]["models_dir"]) / f"{config['model_name']}.pth"
@@ -53,6 +70,12 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
                 issues.append(f"El checkpoint no tiene metadatos internos: {model_path}")
             elif not _schema_matches(config, checkpoint_metadata):
                 issues.append(f"El checkpoint no coincide con el esquema activo: {model_path}")
+            else:
+                universe_ok, detail = _universe_semantically_valid(checkpoint_metadata)
+                if not universe_ok:
+                    issues.append(f"El checkpoint proviene de un universo semanticamente invalido: {detail}")
+                elif detail:
+                    warnings.append(f"El checkpoint proviene de un universo degradado permitido: {detail}")
     except Exception as exc:
         issues.append(f"Checkpoint invalido: {model_path} ({exc})")
 
@@ -67,6 +90,12 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
                 issues.append(f"Los normalizadores no tienen metadatos: {normalizers_path}")
             elif not _schema_matches(config, normalizers_metadata):
                 issues.append(f"Los normalizadores no coinciden con el esquema activo: {normalizers_path}")
+            else:
+                universe_ok, detail = _universe_semantically_valid(normalizers_metadata)
+                if not universe_ok:
+                    issues.append(f"Los normalizadores provienen de un universo semanticamente invalido: {detail}")
+                elif detail:
+                    warnings.append(f"Los normalizadores provienen de un universo degradado permitido: {detail}")
     except Exception as exc:
         issues.append(f"Normalizadores invalidos: {normalizers_path} ({exc})")
 
@@ -81,6 +110,12 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
                 issues.append(f"El dataset procesado no tiene metadatos: {dataset_path}")
             elif not _schema_matches(config, dataset_metadata):
                 issues.append(f"El dataset procesado no coincide con el esquema activo: {dataset_path}")
+            else:
+                universe_ok, detail = _universe_semantically_valid(dataset_metadata)
+                if not universe_ok:
+                    issues.append(f"El dataset procesado proviene de un universo semanticamente invalido: {detail}")
+                elif detail:
+                    warnings.append(f"El dataset procesado proviene de un universo degradado permitido: {detail}")
     except Exception as exc:
         issues.append(f"Dataset procesado invalido: {dataset_path} ({exc})")
 
@@ -93,6 +128,10 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
 
     return ModelReadinessReport(
         ready=True,
-        summary="El modelo tiene checkpoint, normalizadores y dataset procesado compatibles.",
+        summary=(
+            "El modelo tiene checkpoint, normalizadores y dataset procesado compatibles."
+            if not warnings
+            else "El modelo es utilizable, pero fue entrenado con un universo degradado explicitamente permitido."
+        ),
         issues=[],
     )

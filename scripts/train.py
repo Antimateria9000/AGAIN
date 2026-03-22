@@ -147,6 +147,17 @@ def train_model(dataset: tuple, config: dict, use_optuna: bool = True, continue_
     if len(train_dataset) == 0 or len(val_dataset) == 0:
         raise ValueError(f"Datasets vacios: train={len(train_dataset)}, val={len(val_dataset)}")
 
+    training_run = dict(config.get("training_run") or {})
+    universe_integrity = dict(training_run.get("universe_integrity") or {})
+    if universe_integrity and not universe_integrity.get("training_allowed", True):
+        reasons = universe_integrity.get("decision_reasons") or [universe_integrity.get("summary", "Sin detalle")]
+        raise ValueError(
+            "Se ha bloqueado el entrenamiento porque el universo no es semanticamente apto: "
+            + " | ".join(str(reason) for reason in reasons if str(reason))
+        )
+    if universe_integrity.get("degraded"):
+        logger.warning("Entrenamiento en modo degradado explicitamente permitido: %s", universe_integrity.get("summary"))
+
     runtime = resolve_execution_context(config, purpose="train")
     device = runtime.torch_device
     model_save_path, best_model_path, last_model_path = _build_checkpoint_paths(config)

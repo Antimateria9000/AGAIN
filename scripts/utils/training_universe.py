@@ -25,6 +25,7 @@ class PredefinedTrainingGroup:
     name: str
     label: str
     tickers: list[str]
+    anchor_ticker: str | None = None
     description: str = ""
     notes: str = ""
     enabled: bool = True
@@ -35,6 +36,7 @@ class ResolvedTrainingUniverse:
     mode: str
     label: str
     tickers: list[str]
+    anchor_ticker: str | None = None
     single_ticker_symbol: str | None = None
     predefined_group_name: str | None = None
     description: str = ""
@@ -80,9 +82,12 @@ def load_training_groups(config: dict) -> dict[str, PredefinedTrainingGroup]:
     groups: dict[str, PredefinedTrainingGroup] = {}
     for group_name, group_payload in (payload.get("groups") or {}).items():
         tickers = [normalize_ticker_symbol(ticker) for ticker in group_payload.get("tickers", [])]
+        anchor_ticker = group_payload.get("anchor_ticker")
+        normalized_anchor = normalize_ticker_symbol(anchor_ticker) if anchor_ticker else (tickers[0] if tickers else None)
         groups[group_name] = PredefinedTrainingGroup(
             name=group_name,
             label=str(group_payload.get("label") or group_name),
+            anchor_ticker=normalized_anchor,
             description=str(group_payload.get("description") or ""),
             notes=str(group_payload.get("notes") or ""),
             enabled=bool(group_payload.get("enabled", True)),
@@ -111,6 +116,7 @@ def resolve_training_universe(
             mode="single_ticker",
             label=f"Ticker unico: {ticker}",
             tickers=[ticker],
+            anchor_ticker=ticker,
             single_ticker_symbol=ticker,
         )
 
@@ -130,6 +136,7 @@ def resolve_training_universe(
         mode="predefined_group",
         label=selected_group.label,
         tickers=selected_group.tickers,
+        anchor_ticker=selected_group.anchor_ticker,
         predefined_group_name=selected_group.name,
         description=selected_group.description,
         notes=selected_group.notes,
@@ -155,6 +162,13 @@ def _build_runtime_training_metadata(
         "discarded_details": {},
         "final_tickers_used": [],
         "dropped_after_preprocessing": [],
+        "anchor_ticker": universe.anchor_ticker,
+        "universe_integrity": {},
+        "download_universe_integrity": {},
+        "preprocessed_universe_integrity": {},
+        "universe_integrity_report_path": None,
+        "raw_data_staging_path": None,
+        "raw_data_promoted": False,
         "trained_at": trained_at or datetime.now().replace(microsecond=0).isoformat(),
         "years": int(years),
         "prediction_horizon": None,
@@ -190,6 +204,7 @@ def build_runtime_training_config(base_config: dict, universe: ResolvedTrainingU
         "mode": universe.mode,
         "single_ticker_symbol": universe.single_ticker_symbol,
         "predefined_group_name": universe.predefined_group_name,
+        "anchor_ticker": universe.anchor_ticker,
         "label": universe.label,
         "description": universe.description,
         "notes": universe.notes,

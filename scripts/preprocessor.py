@@ -24,6 +24,7 @@ from scripts.utils.data_schema import (
     normalize_feature_list,
 )
 from scripts.utils.feature_engineer import FeatureEngineer
+from scripts.utils.universe_integrity import build_universe_integrity_report
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,60 @@ class DataPreprocessor:
         training_run["dropped_after_preprocessing"] = dropped_after_preprocessing
         self.config["training_run"] = training_run
 
+    def _assert_training_universe_is_trainable(self) -> None:
+        training_run = dict(self.config.get("training_run") or {})
+        integrity = dict(training_run.get("universe_integrity") or {})
+        if not integrity:
+            return
+        if integrity.get("training_allowed", True):
+            return
+        reasons = integrity.get("decision_reasons") or [integrity.get("summary", "Sin detalle")]
+        raise ValueError(
+            "El universo de entrenamiento no es apto para preprocesado: "
+            + " | ".join(str(reason) for reason in reasons if str(reason))
+        )
+
+    def _revalidate_training_universe(self, train_df: pd.DataFrame, val_df: pd.DataFrame) -> None:
+        training_run = dict(self.config.get("training_run") or {})
+        if not training_run:
+            return
+
+        requested_tickers = list(training_run.get("requested_tickers") or [])
+        if not requested_tickers:
+            return
+
+        base_integrity = dict(training_run.get("download_universe_integrity") or training_run.get("universe_integrity") or {})
+        ticker_integrity = dict(base_integrity.get("ticker_integrity") or {})
+        final_df = pd.concat([train_df, val_df], ignore_index=True)
+        ticker_payloads: dict[str, dict] = {}
+        for ticker in requested_tickers:
+            frame = final_df[final_df["Ticker"].astype(str) == str(ticker)].copy()
+            previous = dict(ticker_integrity.get(ticker) or {})
+            ticker_payloads[ticker] = {
+                "frame": frame,
+                "source": previous.get("source", "missing"),
+                "backend_used": previous.get("backend_used"),
+                "errors": list(previous.get("errors", [])),
+                "discard_reason": previous.get("discard_reason") or ("descartado_tras_preprocesado" if frame.empty else None),
+            }
+
+        report = build_universe_integrity_report(self.config, requested_tickers, ticker_payloads)
+        training_run["preprocessed_universe_integrity"] = report.to_dict()
+        training_run["universe_integrity"] = report.to_dict()
+        training_run["downloaded_tickers"] = list(report.successful_tickers)
+        training_run["discarded_tickers"] = list(report.discarded_tickers)
+        training_run["discarded_details"] = dict(report.discarded_details)
+        self.config["training_run"] = training_run
+
+        if not report.training_allowed:
+            reasons = report.decision_reasons or [report.summary]
+            raise ValueError(
+                "El universo deja de ser apto tras el preprocesado: "
+                + " | ".join(str(reason) for reason in reasons if str(reason))
+            )
+        if report.degraded:
+            logger.warning("El universo permanece degradado tras el preprocesado: %s", report.summary)
+
     def _apply_shared_transformations(self, df: pd.DataFrame, mode: str, ticker: str | None = None) -> tuple[pd.DataFrame, pd.Series | None, list[str]]:
         feature_engineer = FeatureEngineer()
         df = feature_engineer.add_features(df, sectors_list=self.config["model"]["sectors"])
@@ -159,6 +214,8 @@ class DataPreprocessor:
             raise ValueError("DataFrame obligatorio")
         if mode == "predict" and ticker is None:
             raise ValueError("El ticker es obligatorio en modo predict")
+        if mode == "train":
+            self._assert_training_universe_is_trainable()
 
         if historical_mode and trim_days > 0 and mode == "predict":
             df = df[df["Date"] >= df["Date"].max() - pd.Timedelta(days=trim_days)]
@@ -171,6 +228,7 @@ class DataPreprocessor:
                 raise ValueError(f"Split train/val vacio: train={len(train_df)}, val={len(val_df)}")
 
             self._update_training_run_metadata(train_df, val_df)
+            self._revalidate_training_universe(train_df, val_df)
             valid_numeric_features = [feature for feature in numeric_features if feature in train_df.columns]
             metadata = self._build_normalizer_metadata(valid_numeric_features)
             normalizers_path = Path(self.config_manager.get("paths.normalizers_dir")) / f"{self.model_name}_normalizers.pkl"

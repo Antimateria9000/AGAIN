@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from dataclasses import dataclass
 import logging
 from pathlib import Path
 
@@ -10,17 +9,12 @@ import yaml
 import yfinance as yf
 
 from .runtime_config import ConfigManager
+from .utils.universe_integrity import UniverseIntegrityReport, build_universe_integrity_report
 from .utils.yfinance_provider import FetchResult, YFinanceProvider
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class FetchUniverseReport:
-    requested_tickers: list[str]
-    successful_tickers: list[str]
-    discarded_tickers: list[str]
-    discarded_details: dict[str, str]
+FetchUniverseReport = UniverseIntegrityReport
 
 
 class DataFetcher:
@@ -49,6 +43,9 @@ class DataFetcher:
             auto_reset_cookie_cache=bool(provider_config.get("auto_reset_cookie_cache", True)),
             trust_env_proxies=bool(provider_config.get("trust_env_proxies", False)),
             session_backend=str(provider_config.get("session_backend", "requests")),
+            rate_limit_cooldown_seconds=float(provider_config.get("rate_limit_cooldown_seconds", 8.0)),
+            rate_limit_circuit_breaker_threshold=int(provider_config.get("rate_limit_circuit_breaker_threshold", 2)),
+            rate_limit_circuit_breaker_seconds=float(provider_config.get("rate_limit_circuit_breaker_seconds", 30.0)),
         )
 
     def _configure_yfinance_cache(self) -> None:
@@ -115,6 +112,19 @@ class DataFetcher:
             if warning:
                 return warning
         return "Sin detalle del proveedor"
+
+    @staticmethod
+    def _collect_provider_errors(result: FetchResult | None) -> list[str]:
+        if not isinstance(result, FetchResult):
+            return []
+        errors: list[str] = []
+        for attempt in result.metadata.attempts:
+            if attempt.error:
+                errors.append(str(attempt.error))
+        for warning in result.metadata.warnings:
+            if warning:
+                errors.append(str(warning))
+        return list(dict.fromkeys(errors))
 
     def _fallback_from_local_raw_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         if not self.raw_data_path.exists():
@@ -235,8 +245,7 @@ class DataFetcher:
         end_date = self._normalize_date(end_date)
         adjusted_start_date = start_date - timedelta(days=self.extra_days)
         normalized_tickers = [str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()]
-        discarded_details: dict[str, str] = {}
-        successful_tickers: list[str] = []
+        ticker_payloads: dict[str, dict] = {}
 
         try:
             bundle = self.provider.get_history_bundle(
@@ -257,6 +266,13 @@ class DataFetcher:
         for ticker in normalized_tickers:
             result = bundle.get(ticker) if isinstance(bundle, dict) else None
             frame = result.data if isinstance(result, FetchResult) else pd.DataFrame()
+            payload = {
+                "fetch_result": result,
+                "source": "missing",
+                "backend_used": getattr(getattr(result, "metadata", None), "backend_used", None),
+                "errors": self._collect_provider_errors(result),
+                "discard_reason": None,
+            }
             if frame.empty:
                 fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
                 if fallback.empty:
@@ -264,10 +280,13 @@ class DataFetcher:
                     if detail == "Sin detalle del proveedor" and general_failure_detail:
                         detail = general_failure_detail
                     logger.warning("Se omite %s por falta de datos. Detalle del proveedor: %s", ticker, detail)
-                    discarded_details[ticker] = detail
+                    payload["discard_reason"] = detail
+                    ticker_payloads[ticker] = payload
                     continue
-                results.append(fallback)
-                successful_tickers.append(ticker)
+                payload["frame"] = fallback
+                payload["source"] = "local_cache"
+                payload["discard_reason"] = self._describe_provider_failure(result)
+                ticker_payloads[ticker] = payload
                 continue
 
             prepared = self._prepare_output_frame(ticker, frame)
@@ -279,46 +298,40 @@ class DataFetcher:
                     if detail == "Sin detalle del proveedor":
                         detail = "Sin datos utiles tras filtrar el rango solicitado"
                     logger.warning("Se omite %s por falta de datos utiles. Detalle: %s", ticker, detail)
-                    discarded_details[ticker] = detail
+                    payload["discard_reason"] = detail
+                    ticker_payloads[ticker] = payload
                     continue
-                results.append(fallback)
-                successful_tickers.append(ticker)
+                payload["frame"] = fallback
+                payload["source"] = "local_cache"
+                payload["discard_reason"] = "sin_datos_utiles_tras_filtrado"
+                ticker_payloads[ticker] = payload
                 continue
-            results.append(prepared)
-            successful_tickers.append(ticker)
+            payload["frame"] = prepared
+            payload["source"] = "fresh_network"
+            ticker_payloads[ticker] = payload
+
+        report = build_universe_integrity_report(self.config, normalized_tickers, ticker_payloads)
+        for ticker in normalized_tickers:
+            payload = ticker_payloads.get(ticker) or {}
+            frame = payload.get("frame")
+            if isinstance(frame, pd.DataFrame) and not frame.empty:
+                results.append(frame)
 
         if not results:
-            return pd.DataFrame(), FetchUniverseReport(
-                requested_tickers=normalized_tickers,
-                successful_tickers=[],
-                discarded_tickers=list(discarded_details.keys()),
-                discarded_details=discarded_details,
-            )
+            return pd.DataFrame(), report
 
         combined = pd.concat(results, ignore_index=True)
-        combined["Sector"] = pd.Categorical(
-            combined["Sector"],
-            categories=self.config["model"]["sectors"],
-            ordered=False,
-        )
-        report = FetchUniverseReport(
-            requested_tickers=normalized_tickers,
-            successful_tickers=list(dict.fromkeys(successful_tickers)),
-            discarded_tickers=[ticker for ticker in normalized_tickers if ticker not in successful_tickers],
-            discarded_details=discarded_details,
-        )
+        combined["Sector"] = pd.Categorical(combined["Sector"], categories=self.config["model"]["sectors"], ordered=False)
         return combined, report
 
     def fetch_training_universe(self, tickers: list[str]) -> tuple[pd.DataFrame, FetchUniverseReport]:
         end_date = datetime.now().replace(tzinfo=None)
         start_date = end_date - timedelta(days=self.years * 365)
         combined, report = self.fetch_many_stocks_with_report(tickers, start_date, end_date)
-        if combined.empty:
-            return combined, report
-        self.raw_data_path.parent.mkdir(parents=True, exist_ok=True)
-        combined.to_csv(self.raw_data_path, index=False)
-        logger.info("Datos del universo de entrenamiento guardados en %s", self.raw_data_path)
-        return combined, report
+        if combined.empty or not report.successful_tickers:
+            return pd.DataFrame(), report
+        filtered = combined[combined["Ticker"].astype(str).isin(report.successful_tickers)].reset_index(drop=True)
+        return filtered, report
 
     def fetch_global_stocks(self, region: str | None = None) -> pd.DataFrame:
         end_date = datetime.now().replace(tzinfo=None)
@@ -328,9 +341,6 @@ class DataFetcher:
         if combined.empty:
             logger.error("No se ha podido descargar ningun ticker")
             return combined
-        self.raw_data_path.parent.mkdir(parents=True, exist_ok=True)
-        combined.to_csv(self.raw_data_path, index=False)
-        logger.info("Datos guardados en %s", self.raw_data_path)
         return combined
 
     def fetch_stock_data_sync(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:

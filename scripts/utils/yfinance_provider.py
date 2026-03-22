@@ -126,6 +126,7 @@ class DownloadAttempt:
     success: bool
     rows: int = 0
     error: Optional[str] = None
+    error_category: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -434,6 +435,9 @@ class YFinanceProvider:
         auto_reset_cookie_cache: bool = True,
         trust_env_proxies: bool = False,
         session_backend: str = "requests",
+        rate_limit_cooldown_seconds: float = 8.0,
+        rate_limit_circuit_breaker_threshold: int = 2,
+        rate_limit_circuit_breaker_seconds: float = 30.0,
     ) -> None:
         self.max_workers = int(max_workers)
         self.retries = int(retries)
@@ -447,6 +451,13 @@ class YFinanceProvider:
         self.trust_env_proxies = bool(trust_env_proxies)
         self.session_backend = self._normalize_session_backend(session_backend)
         self._cookie_cache_lock = RLock()
+        self.rate_limit_cooldown_seconds = float(rate_limit_cooldown_seconds)
+        self.rate_limit_circuit_breaker_threshold = int(rate_limit_circuit_breaker_threshold)
+        self.rate_limit_circuit_breaker_seconds = float(rate_limit_circuit_breaker_seconds)
+        self._provider_state_lock = RLock()
+        self._yfinance_rate_limit_streak = 0
+        self._yfinance_cooldown_until = 0.0
+        self._yfinance_circuit_open_until = 0.0
 
         if self.max_workers < 1:
             raise ProviderConfigurationError("max_workers debe ser >= 1.")
@@ -458,6 +469,12 @@ class YFinanceProvider:
             raise ProviderConfigurationError("min_delay debe ser >= 0.")
         if self.max_intraday_lookback_days < 1:
             raise ProviderConfigurationError("max_intraday_lookback_days debe ser >= 1.")
+        if self.rate_limit_cooldown_seconds < 0:
+            raise ProviderConfigurationError("rate_limit_cooldown_seconds debe ser >= 0.")
+        if self.rate_limit_circuit_breaker_threshold < 1:
+            raise ProviderConfigurationError("rate_limit_circuit_breaker_threshold debe ser >= 1.")
+        if self.rate_limit_circuit_breaker_seconds < 0:
+            raise ProviderConfigurationError("rate_limit_circuit_breaker_seconds debe ser >= 0.")
 
         self._configure_cache()
         if self.session_backend == "curl_cffi":
@@ -648,6 +665,21 @@ class YFinanceProvider:
                 return True
         return False
 
+    def _is_timeout_error(self, exc: Exception) -> bool:
+        timeout_types = (
+            TimeoutError,
+            requests.Timeout,
+            requests.ConnectTimeout,
+            requests.ReadTimeout,
+        )
+        for item in self._exception_chain(exc):
+            if isinstance(item, timeout_types):
+                return True
+            message = str(item).lower()
+            if "timed out" in message or "timeout" in message:
+                return True
+        return False
+
     def _is_cookie_cache_error(self, exc: Exception) -> bool:
         for item in self._exception_chain(exc):
             message = str(item).lower()
@@ -665,6 +697,59 @@ class YFinanceProvider:
         if not self.auto_reset_cookie_cache:
             return False
         return self._is_rate_limit_error(exc) or self._is_cookie_cache_error(exc)
+
+    @staticmethod
+    def _is_yfinance_backend(backend: str) -> bool:
+        return backend in {"ticker", "download"}
+
+    def _classify_error(self, exc: Exception | None) -> str | None:
+        if exc is None:
+            return None
+        if self._is_rate_limit_error(exc):
+            return "rate_limit"
+        if self._is_cookie_cache_error(exc):
+            return "cookie_cache"
+        if self._is_timeout_error(exc):
+            return "timeout"
+        if isinstance(exc, EmptyDatasetError):
+            return "empty_dataset"
+        if isinstance(exc, DownloadFailureError):
+            return "download_failure"
+        return "provider_error"
+
+    def _register_backend_success(self, backend: str) -> None:
+        if not self._is_yfinance_backend(backend):
+            return
+        with self._provider_state_lock:
+            self._yfinance_rate_limit_streak = 0
+            self._yfinance_cooldown_until = 0.0
+            self._yfinance_circuit_open_until = 0.0
+
+    def _register_backend_failure(self, backend: str, exc: Exception) -> None:
+        if not self._is_yfinance_backend(backend):
+            return
+        if not self._is_rate_limit_error(exc):
+            return
+        now = time.monotonic()
+        with self._provider_state_lock:
+            self._yfinance_rate_limit_streak += 1
+            if self._yfinance_rate_limit_streak >= self.rate_limit_circuit_breaker_threshold:
+                self._yfinance_cooldown_until = max(self._yfinance_cooldown_until, now + self.rate_limit_cooldown_seconds)
+                self._yfinance_circuit_open_until = max(
+                    self._yfinance_circuit_open_until,
+                    now + self.rate_limit_circuit_breaker_seconds,
+                )
+
+    def _backend_block_reason(self, backend: str) -> str | None:
+        if not self._is_yfinance_backend(backend):
+            return None
+        now = time.monotonic()
+        with self._provider_state_lock:
+            if self._yfinance_circuit_open_until > now:
+                return f"circuit_breaker_yfinance_activo:{self._yfinance_circuit_open_until - now:.1f}s"
+            if self._yfinance_cooldown_until > now:
+                return f"cooldown_rate_limit_yfinance_activo:{self._yfinance_cooldown_until - now:.1f}s"
+        return None
 
     def _download_via_ticker(
         self,
@@ -1095,6 +1180,26 @@ class YFinanceProvider:
         for attempt_number in range(1, self.retries + 1):
             for backend in backends:
                 started = time.perf_counter()
+                blocked_reason = self._backend_block_reason(backend)
+                if blocked_reason:
+                    metadata.attempts.append(
+                        DownloadAttempt(
+                            attempt_number=attempt_number,
+                            backend=backend,
+                            interval=resolved_interval,
+                            start=_ts_to_iso(effective_start),
+                            end=_ts_to_iso(effective_end),
+                            duration_seconds=0.0,
+                            success=False,
+                            rows=0,
+                            error=blocked_reason,
+                            error_category="rate_limit_backoff",
+                        )
+                    )
+                    metadata.warnings.append(
+                        f"Se omite temporalmente el backend {backend} por proteccion global frente a rate limit: {blocked_reason}."
+                    )
+                    continue
                 try:
                     frame, chunked, chunk_count = self._download_range(
                         backend=backend,
@@ -1117,6 +1222,7 @@ class YFinanceProvider:
                             success=not frame.empty,
                             rows=int(len(frame)),
                             error=None if not frame.empty else "dataframe vacio",
+                            error_category=None if not frame.empty else "empty_dataset",
                         )
                     )
 
@@ -1126,6 +1232,7 @@ class YFinanceProvider:
                         )
                         continue
 
+                    self._register_backend_success(backend)
                     actual_start, actual_end = _extract_actual_bounds(frame)
                     metadata.actual_start = _ts_to_iso(actual_start)
                     metadata.actual_end = _ts_to_iso(actual_end)
@@ -1150,8 +1257,10 @@ class YFinanceProvider:
                             success=False,
                             rows=0,
                             error=str(exc),
+                            error_category=self._classify_error(exc),
                         )
                     )
+                    self._register_backend_failure(backend, exc)
                     if not reset_done and self._should_reset_cookie_cache(exc):
                         reset_done = True
                         if self._is_rate_limit_error(exc):
@@ -1318,6 +1427,9 @@ class YFinanceProvider:
             "allow_partial_intraday": self.allow_partial_intraday,
             "repair": self.repair,
             "session_backend": self.session_backend,
+            "rate_limit_cooldown_seconds": self.rate_limit_cooldown_seconds,
+            "rate_limit_circuit_breaker_threshold": self.rate_limit_circuit_breaker_threshold,
+            "rate_limit_circuit_breaker_seconds": self.rate_limit_circuit_breaker_seconds,
             "trust_env_proxies": self.trust_env_proxies,
             "export_columns": list(EXPORT_COLUMNS),
         }

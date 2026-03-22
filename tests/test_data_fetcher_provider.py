@@ -357,6 +357,91 @@ artifacts:
         self.assertEqual(result.metadata.backend_used, "direct_chart")
         self.assertEqual(list(result.data.columns), ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume", "Dividends", "Stock Splits"])
 
+    def test_provider_activa_proteccion_global_tras_rate_limit_sostenido(self):
+        provider = YFinanceProvider(
+            max_workers=1,
+            retries=1,
+            min_delay=0.0,
+            timeout=1.0,
+            auto_reset_cookie_cache=False,
+            rate_limit_cooldown_seconds=10.0,
+            rate_limit_circuit_breaker_threshold=2,
+            rate_limit_circuit_breaker_seconds=20.0,
+        )
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return DataFetcherProviderTests._chart_payload()
+
+        fake_session = mock.Mock()
+        fake_session.get.return_value = FakeResponse()
+        fake_session.headers = {}
+        fake_session.proxies = {}
+        fake_session.trust_env = False
+
+        with mock.patch.object(provider, "_download_via_ticker", side_effect=YFRateLimitError()), mock.patch.object(
+            provider, "_download_via_download", side_effect=YFRateLimitError()
+        ), mock.patch("scripts.utils.yfinance_provider.requests.Session", return_value=fake_session):
+            first = provider.get_history_bundle(
+                symbols="BBVA.MC",
+                start=pd.Timestamp("2024-01-01"),
+                end=pd.Timestamp("2024-01-10"),
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+            second = provider.get_history_bundle(
+                symbols="BBVA.MC",
+                start=pd.Timestamp("2024-01-01"),
+                end=pd.Timestamp("2024-01-10"),
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+
+        self.assertEqual(first.metadata.backend_used, "direct_chart")
+        self.assertEqual(second.metadata.backend_used, "direct_chart")
+        self.assertTrue(
+            any(attempt.error_category == "rate_limit_backoff" for attempt in second.metadata.attempts),
+            second.metadata.to_dict(),
+        )
+
+    def test_fetch_many_stocks_with_report_marca_fallback_local_de_forma_explicita(self):
+        fetcher = DataFetcher(self.config_manager, years=1)
+        fetcher.config["training_universe"]["minimum_rows_per_ticker"] = 1
+        fetcher.config["training_universe"]["minimum_group_coverage_ratio"] = 1.0
+        cached = pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+                "Open": [100.0, 101.0, 102.0],
+                "High": [101.0, 102.0, 103.0],
+                "Low": [99.0, 100.0, 101.0],
+                "Close": [100.5, 101.5, 102.5],
+                "Volume": [1_000_000, 1_100_000, 1_200_000],
+                "Ticker": ["AAPL", "AAPL", "AAPL"],
+                "Sector": ["Technology", "Technology", "Technology"],
+            }
+        )
+        cached.to_csv(Path(self.config_manager.config["data"]["raw_data_path"]), index=False)
+
+        empty_result = FetchResult(symbol="AAPL", data=pd.DataFrame(), metadata=build_metadata("AAPL"))
+        with mock.patch.object(fetcher.provider, "get_history_bundle", return_value={"AAPL": empty_result}):
+            combined, report = fetcher.fetch_many_stocks_with_report(
+                ["AAPL"],
+                pd.Timestamp("2024-01-02").to_pydatetime(),
+                pd.Timestamp("2024-01-10").to_pydatetime(),
+            )
+
+        self.assertFalse(combined.empty)
+        self.assertEqual(report.fallback_tickers, ["AAPL"])
+        self.assertEqual(report.ticker_integrity["AAPL"].source, "local_cache")
+        self.assertEqual(report.ticker_integrity["AAPL"].final_status, "fallback_cache")
+
     def test_fetch_many_stocks_reporta_el_detalle_real_del_provider(self):
         fetcher = DataFetcher(self.config_manager, years=1)
         failure_result = FetchResult(

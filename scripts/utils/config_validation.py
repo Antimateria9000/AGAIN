@@ -79,6 +79,15 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
     if session_backend not in {"requests", "curl_cffi"}:
         raise ValueError("La clave 'data_fetch.session_backend' debe ser 'requests' o 'curl_cffi'")
 
+    training_universe = dict(config.get("training_universe") or {})
+    coverage_ratio = float(training_universe.get("minimum_group_coverage_ratio", 1.0))
+    if not 0.0 <= coverage_ratio <= 1.0:
+        raise ValueError("La clave 'training_universe.minimum_group_coverage_ratio' debe estar en [0, 1]")
+
+    fallback_ratio = float(training_universe.get("maximum_fallback_ratio", 0.0))
+    if fallback_ratio < 0.0 or fallback_ratio > 1.0:
+        raise ValueError("La clave 'training_universe.maximum_fallback_ratio' debe estar en [0, 1]")
+
     return config
 
 
@@ -128,6 +137,25 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
 
     resolved.setdefault("training_universe", {})
     resolved["training_universe"].setdefault("minimum_group_tickers", 2)
+    resolved["training_universe"].setdefault(
+        "minimum_group_tickers_abs",
+        int(resolved["training_universe"].get("minimum_group_tickers", 2)),
+    )
+    resolved["training_universe"].setdefault("minimum_group_coverage_ratio", 1.0)
+    resolved["training_universe"].setdefault(
+        "minimum_rows_per_ticker",
+        int(resolved["model"]["max_encoder_length"]) + int(resolved["model"]["max_prediction_length"]) + 1,
+    )
+    resolved["training_universe"].setdefault(
+        "minimum_common_overlap_days",
+        int(resolved["model"]["max_prediction_length"]) + 1,
+    )
+    resolved["training_universe"].setdefault("abort_if_anchor_missing", True)
+    resolved["training_universe"].setdefault("abort_if_too_many_fallback_tickers", True)
+    resolved["training_universe"].setdefault("abort_on_cached_backfill", False)
+    resolved["training_universe"].setdefault("allow_degraded_universe", False)
+    resolved["training_universe"].setdefault("maximum_fallback_tickers", 0)
+    resolved["training_universe"].setdefault("maximum_fallback_ratio", 0.0)
 
     resolved.setdefault("data_fetch", {})
     resolved["data_fetch"].setdefault("max_workers", 1)
@@ -142,5 +170,8 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     resolved["data_fetch"].setdefault("use_yfinance_sector_lookup", False)
     resolved["data_fetch"].setdefault("session_backend", "requests")
     resolved["data_fetch"].setdefault("yfinance_cache_dir", str(Path(resolved["paths"]["data_dir"]) / "cache" / "yfinance"))
+    resolved["data_fetch"].setdefault("rate_limit_cooldown_seconds", 8.0)
+    resolved["data_fetch"].setdefault("rate_limit_circuit_breaker_threshold", 2)
+    resolved["data_fetch"].setdefault("rate_limit_circuit_breaker_seconds", 30.0)
 
     return resolved

@@ -1,0 +1,177 @@
+{
+  "base_model_name": "Gen6_1",
+  "config_hash": "0dc0beadd579e6b155c41425ab1be674ed01e0562a52ffb295f7d674add4a4fa",
+  "day_of_week_categories": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+  ],
+  "embedding_sizes": {
+    "Day_of_Week": [
+      8,
+      4
+    ],
+    "Month": [
+      13,
+      6
+    ],
+    "Sector": [
+      13,
+      6
+    ]
+  },
+  "known_categoricals": [
+    "Day_of_Week",
+    "Month"
+  ],
+  "log_features": [
+    "Close",
+    "Volume",
+    "MA10",
+    "MA50",
+    "VWAP"
+  ],
+  "max_encoder_length": 180,
+  "max_prediction_length": 60,
+  "min_encoder_length": 50,
+  "model_name": "Gen6_1__group__bbva_peer_banks",
+  "month_categories": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12"
+  ],
+  "numeric_features": [
+    "Close",
+    "Volume",
+    "MA10",
+    "MA50",
+    "RSI",
+    "MACD",
+    "ROC",
+    "VWAP",
+    "Momentum_20d",
+    "Close_to_MA_ratio",
+    "Close_to_BB_upper"
+  ],
+  "required_normalizer_keys": [
+    "Close",
+    "Volume",
+    "MA10",
+    "MA50",
+    "RSI",
+    "MACD",
+    "ROC",
+    "VWAP",
+    "Momentum_20d",
+    "Close_to_MA_ratio",
+    "Close_to_BB_upper",
+    "Relative_Returns"
+  ],
+  "required_numeric_columns": [
+    "Close",
+    "Volume",
+    "MA10",
+    "MA50",
+    "RSI",
+    "MACD",
+    "ROC",
+    "VWAP",
+    "Momentum_20d",
+    "Close_to_MA_ratio",
+    "Close_to_BB_upper",
+    "Relative_Returns"
+  ],
+  "schema_hash": "158dd3056e0b07509e08062ccdd5bb4936f099194e6cd49338557a4fecfcc13e",
+  "schema_version": 2,
+  "sectors": [
+    "Technology",
+    "Healthcare",
+    "Financials",
+    "Consumer Discretionary",
+    "Consumer Staples",
+    "Energy",
+    "Utilities",
+    "Industrials",
+    "Materials",
+    "Communication Services",
+    "Real Estate",
+    "Unknown"
+  ],
+  "static_categoricals": [
+    "Sector"
+  ],
+  "target": "Relative_Returns",
+  "target_manually_normalized": false,
+  "training_run": {
+    "description": "Universo bancario europeo curado para entrenar BBVA frente a peers comparables.",
+    "discarded_details": {},
+    "discarded_tickers": [],
+    "downloaded_tickers": [
+      "BBVA.MC",
+      "SAN.MC",
+      "CABK.MC",
+      "SAB.MC",
+      "BKT.MC",
+      "BNP.PA",
+      "GLE.PA",
+      "ISP.MI",
+      "UCG.MI",
+      "INGA.AS"
+    ],
+    "dropped_after_preprocessing": [],
+    "final_tickers_used": [
+      "BBVA.MC",
+      "BKT.MC",
+      "BNP.PA",
+      "CABK.MC",
+      "GLE.PA",
+      "INGA.AS",
+      "ISP.MI",
+      "SAB.MC",
+      "SAN.MC",
+      "UCG.MI"
+    ],
+    "label": "BBVA + peer set bancario curado",
+    "mode": "predefined_group",
+    "notes": "Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial acotado.",
+    "predefined_group_name": "bbva_peer_banks",
+    "prediction_horizon": 60,
+    "requested_tickers": [
+      "BBVA.MC",
+      "SAN.MC",
+      "CABK.MC",
+      "SAB.MC",
+      "BKT.MC",
+      "BNP.PA",
+      "GLE.PA",
+      "ISP.MI",
+      "UCG.MI",
+      "INGA.AS"
+    ],
+    "single_ticker_symbol": null,
+    "trained_at": "2026-03-22T20:25:05",
+    "years": 3
+  },
+  "training_universe": {
+    "description": "Universo bancario europeo curado para entrenar BBVA frente a peers comparables.",
+    "label": "BBVA + peer set bancario curado",
+    "minimum_group_tickers": 2,
+    "mode": "predefined_group",
+    "notes": "Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial acotado.",
+    "predefined_group_name": "bbva_peer_banks",
+    "single_ticker_symbol": null
+  }
+}
