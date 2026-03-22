@@ -67,7 +67,7 @@ profiles:
     - SAB.MC
     - SAN.MC
     - UCG.MI
-    created_at: '2026-03-22T20:25:05'
-    last_trained_at: '2026-03-22T20:25:05'
+    created_at: '2026-03-22T23:16:34'
+    last_trained_at: '2026-03-22T23:16:34'
     prediction_horizon: 60
-    years: 3
+    years: 5

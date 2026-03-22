@@ -80,16 +80,27 @@ training:
   precision: auto
 training_universe:
   minimum_group_tickers: 2
+  minimum_group_tickers_abs: 2
+  minimum_group_coverage_ratio: 0.8
+  minimum_rows_per_ticker: 241
+  minimum_common_overlap_days: 80
+  abort_if_anchor_missing: true
+  abort_if_too_many_fallback_tickers: true
+  abort_on_cached_backfill: false
+  allow_degraded_universe: false
+  maximum_fallback_tickers: 0
+  maximum_fallback_ratio: 0.0
   mode: predefined_group
   single_ticker_symbol: null
   predefined_group_name: bbva_peer_banks
+  anchor_ticker: BBVA.MC
   label: BBVA + peer set bancario curado
   description: Universo bancario europeo curado para entrenar BBVA frente a peers
     comparables.
   notes: Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial
     acotado.
 prediction:
-  years: 3
+  years: 5
   batch_size: 128
   future_dates_mode: approximate_business_days
 validation:
@@ -111,7 +122,7 @@ data:
   benchmark_tickers_file: config/benchmark_tickers.yaml
   train_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\train_processed_df.parquet
   val_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\val_processed_df.parquet
-  years: 3
+  years: 5
   tickers:
   - BBVA.MC
   - SAN.MC
@@ -136,6 +147,9 @@ data_fetch:
   use_yfinance_sector_lookup: false
   session_backend: requests
   yfinance_cache_dir: data/cache/yfinance
+  rate_limit_cooldown_seconds: 8.0
+  rate_limit_circuit_breaker_threshold: 2
+  rate_limit_circuit_breaker_seconds: 30.0
 paths:
   data_dir: data
   models_dir: models
@@ -190,11 +204,892 @@ training_run:
   - SAN.MC
   - UCG.MI
   dropped_after_preprocessing: []
-  trained_at: '2026-03-22T20:25:05'
-  years: 3
+  anchor_ticker: BBVA.MC
+  universe_integrity:
+    requested_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    successful_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    discarded_tickers: []
+    discarded_details: {}
+    ticker_integrity:
+      BBVA.MC:
+        ticker: BBVA.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - dataframe vacio
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: true
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAN.MC:
+        ticker: SAN.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - circuit_breaker_yfinance_activo:29.0s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:29.0s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      CABK.MC:
+        ticker: CABK.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:28.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAB.MC:
+        ticker: SAB.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:27.4s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BKT.MC:
+        ticker: BKT.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:26.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BNP.PA:
+        ticker: BNP.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:25.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      GLE.PA:
+        ticker: GLE.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:20.8s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      ISP.MI:
+        ticker: ISP.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:20.1s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        rows_obtained: 1215
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      UCG.MI:
+        ticker: UCG.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:19.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        rows_obtained: 1215
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      INGA.AS:
+        ticker: INGA.AS
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:18.6s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+    fresh_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    fallback_tickers: []
+    coverage_abs: 10
+    coverage_ratio: 1.0
+    anchor_ticker: BBVA.MC
+    anchor_present: true
+    anchor_usable: true
+    minimum_group_tickers_abs: 2
+    minimum_group_coverage_ratio: 0.8
+    minimum_rows_per_ticker: 241
+    minimum_common_overlap_days: 80
+    common_overlap_days: 1215
+    allow_degraded_universe: false
+    abort_if_anchor_missing: true
+    abort_if_too_many_fallback_tickers: true
+    abort_on_cached_backfill: false
+    maximum_fallback_tickers: 0
+    maximum_fallback_ratio: 0.0
+    decision: CONTINUE_CLEAN
+    decision_reasons: []
+    training_allowed: true
+    can_promote_canonical: true
+    degraded: false
+    summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10 | fallback=0
+      | discarded=0 | coverage=100.00% | overlap=1215
+  download_universe_integrity:
+    requested_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    successful_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    discarded_tickers: []
+    discarded_details: {}
+    ticker_integrity:
+      BBVA.MC:
+        ticker: BBVA.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - dataframe vacio
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        rows_obtained: 1278
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: true
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAN.MC:
+        ticker: SAN.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - circuit_breaker_yfinance_activo:29.0s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:29.0s.'
+        rows_obtained: 1278
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      CABK.MC:
+        ticker: CABK.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:28.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        rows_obtained: 1278
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAB.MC:
+        ticker: SAB.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:27.4s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        rows_obtained: 1278
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BKT.MC:
+        ticker: BKT.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:26.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        rows_obtained: 1278
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BNP.PA:
+        ticker: BNP.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:25.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        rows_obtained: 1280
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      GLE.PA:
+        ticker: GLE.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:20.8s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        rows_obtained: 1280
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      ISP.MI:
+        ticker: ISP.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:20.1s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        rows_obtained: 1270
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      UCG.MI:
+        ticker: UCG.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:19.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        rows_obtained: 1270
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      INGA.AS:
+        ticker: INGA.AS
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 3
+        errors:
+        - circuit_breaker_yfinance_activo:18.6s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        rows_obtained: 1280
+        actual_start: '2021-03-24T00:00:00'
+        actual_end: '2026-03-20T00:00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+    fresh_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    fallback_tickers: []
+    coverage_abs: 10
+    coverage_ratio: 1.0
+    anchor_ticker: BBVA.MC
+    anchor_present: true
+    anchor_usable: true
+    minimum_group_tickers_abs: 2
+    minimum_group_coverage_ratio: 0.8
+    minimum_rows_per_ticker: 241
+    minimum_common_overlap_days: 80
+    common_overlap_days: 1270
+    allow_degraded_universe: false
+    abort_if_anchor_missing: true
+    abort_if_too_many_fallback_tickers: true
+    abort_on_cached_backfill: false
+    maximum_fallback_tickers: 0
+    maximum_fallback_ratio: 0.0
+    decision: CONTINUE_CLEAN
+    decision_reasons: []
+    training_allowed: true
+    can_promote_canonical: true
+    degraded: false
+    summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10 | fallback=0
+      | discarded=0 | coverage=100.00% | overlap=1270
+  preprocessed_universe_integrity:
+    requested_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    successful_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    discarded_tickers: []
+    discarded_details: {}
+    ticker_integrity:
+      BBVA.MC:
+        ticker: BBVA.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - dataframe vacio
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: true
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAN.MC:
+        ticker: SAN.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - Too Many Requests. Rate limited. Try after a while.
+        - circuit_breaker_yfinance_activo:29.0s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - Se ha detectado posible bloqueo por tasa o cookie/crumb y se ha reiniciado
+          la cache persistente.
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:29.0s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      CABK.MC:
+        ticker: CABK.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:28.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:28.2s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      SAB.MC:
+        ticker: SAB.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:27.4s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:27.4s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BKT.MC:
+        ticker: BKT.MC
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:26.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:26.3s.'
+        rows_obtained: 1223
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      BNP.PA:
+        ticker: BNP.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:25.2s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:25.2s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      GLE.PA:
+        ticker: GLE.PA
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:20.8s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.8s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      ISP.MI:
+        ticker: ISP.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:20.1s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:20.1s.'
+        rows_obtained: 1215
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      UCG.MI:
+        ticker: UCG.MI
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:19.3s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:19.3s.'
+        rows_obtained: 1215
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+      INGA.AS:
+        ticker: INGA.AS
+        final_status: ok
+        source: fresh_network
+        backend_used: direct_chart
+        attempt_count: 0
+        errors:
+        - circuit_breaker_yfinance_activo:18.6s
+        - La fecha final solicitada estaba en el futuro respecto a UTC y se ha truncado
+          al instante actual.
+        - 'Se omite temporalmente el backend ticker por proteccion global frente a
+          rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        - 'Se omite temporalmente el backend download por proteccion global frente
+          a rate limit: circuit_breaker_yfinance_activo:18.6s.'
+        rows_obtained: 1225
+        actual_start: '2021-06-03T00:00:00+00:00'
+        actual_end: '2026-03-20T00:00:00+00:00'
+        meets_minimum_rows: true
+        discard_reason: null
+        is_anchor_ticker: false
+        trainable: true
+        used_fallback: false
+        freshness: fresh
+    fresh_tickers:
+    - BBVA.MC
+    - SAN.MC
+    - CABK.MC
+    - SAB.MC
+    - BKT.MC
+    - BNP.PA
+    - GLE.PA
+    - ISP.MI
+    - UCG.MI
+    - INGA.AS
+    fallback_tickers: []
+    coverage_abs: 10
+    coverage_ratio: 1.0
+    anchor_ticker: BBVA.MC
+    anchor_present: true
+    anchor_usable: true
+    minimum_group_tickers_abs: 2
+    minimum_group_coverage_ratio: 0.8
+    minimum_rows_per_ticker: 241
+    minimum_common_overlap_days: 80
+    common_overlap_days: 1215
+    allow_degraded_universe: false
+    abort_if_anchor_missing: true
+    abort_if_too_many_fallback_tickers: true
+    abort_on_cached_backfill: false
+    maximum_fallback_tickers: 0
+    maximum_fallback_ratio: 0.0
+    decision: CONTINUE_CLEAN
+    decision_reasons: []
+    training_allowed: true
+    can_promote_canonical: true
+    degraded: false
+    summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10 | fallback=0
+      | discarded=0 | coverage=100.00% | overlap=1215
+  universe_integrity_report_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data__integrity_report.json
+  raw_data_staging_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data__staging.csv
+  raw_data_promoted: true
+  trained_at: '2026-03-22T23:16:34'
+  years: 5
   prediction_horizon: 60
   label: BBVA + peer set bancario curado
   description: Universo bancario europeo curado para entrenar BBVA frente a peers
     comparables.
   notes: Incluye bancos espanoles y peers europeos liquidos para un modelo sectorial
     acotado.
+  integrity_decision: CONTINUE_CLEAN
+  integrity_summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10
+    | fallback=0 | discarded=0 | coverage=100.00% | overlap=1270
+  raw_data_artifact_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data.csv
