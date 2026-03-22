@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import torch
@@ -9,7 +10,10 @@ from app.benchmark_utils import run_benchmark
 from scripts.data_fetcher import DataFetcher
 from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
+from scripts.utils.model_registry import list_model_profiles
 from scripts.utils.model_readiness import assess_model_readiness
+from scripts.utils.training_universe import resolve_training_universe
+from start_training import start_training
 
 
 class ForecastService:
@@ -90,4 +94,57 @@ class BenchmarkService:
             historical_period_days=historical_period_days,
             run_timestamp=datetime.now().replace(tzinfo=None),
         )
+
+
+class TrainingService:
+    def __init__(self, base_config_manager: ConfigManager):
+        self.base_config_manager = base_config_manager
+        self.base_config = base_config_manager.config
+
+    def preview_universe(
+        self,
+        mode: str,
+        single_ticker_symbol: str | None = None,
+        predefined_group_name: str | None = None,
+    ):
+        return resolve_training_universe(
+            self.base_config,
+            mode=mode,
+            single_ticker_symbol=single_ticker_symbol,
+            predefined_group_name=predefined_group_name,
+        )
+
+    def list_registered_profiles(self) -> list[dict]:
+        return list_model_profiles(self.base_config)
+
+    def train(
+        self,
+        mode: str,
+        years: int,
+        use_optuna: bool,
+        single_ticker_symbol: str | None = None,
+        predefined_group_name: str | None = None,
+    ):
+        base_config_path = self.base_config.get("_meta", {}).get("config_path")
+        return start_training(
+            config_path=base_config_path,
+            years=years,
+            use_optuna=use_optuna,
+            continue_training=False,
+            training_universe_mode=mode,
+            single_ticker_symbol=single_ticker_symbol,
+            predefined_group_name=predefined_group_name,
+        )
+
+    @staticmethod
+    def format_profile_label(profile_entry: dict) -> str:
+        label = str(profile_entry.get("label") or profile_entry.get("model_name") or "modelo")
+        model_name = str(profile_entry.get("model_name") or "")
+        return f"{label} [{model_name}]"
+
+    @staticmethod
+    def normalize_profile_path(profile_path: str | None) -> str | None:
+        if not profile_path:
+            return None
+        return str(Path(profile_path))
 

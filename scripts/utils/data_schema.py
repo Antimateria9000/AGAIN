@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from typing import Any, Dict, Iterable, List
 
 TARGET_COLUMN = "Relative_Returns"
@@ -76,6 +77,13 @@ def build_schema_hash(
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def build_config_hash(config: Dict[str, Any]) -> str:
+    serializable = deepcopy(config)
+    serializable.pop("_meta", None)
+    serialized = json.dumps(serializable, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def build_artifact_metadata(
     config: Dict[str, Any],
     numeric_features: Iterable[str] | None = None,
@@ -84,7 +92,13 @@ def build_artifact_metadata(
 ) -> Dict[str, Any]:
     metadata = build_schema_payload(config, numeric_features, categorical_features)
     metadata["model_name"] = config["model_name"]
+    metadata["base_model_name"] = config.get("base_model_name", config["model_name"])
     metadata["schema_hash"] = build_schema_hash(config, numeric_features, categorical_features)
+    metadata["config_hash"] = build_config_hash(config)
+    if "training_universe" in config:
+        metadata["training_universe"] = deepcopy(config["training_universe"])
+    if "training_run" in config:
+        metadata["training_run"] = deepcopy(config["training_run"])
     if extra:
         metadata.update(extra)
     return metadata

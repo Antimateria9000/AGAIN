@@ -22,6 +22,8 @@ class StaticRepoTests(unittest.TestCase):
         self.assertIn("train_processed_df_path: data/train/train_processed_df.parquet", config_text)
         self.assertIn("val_processed_df_path: data/train/val_processed_df.parquet", config_text)
         self.assertIn("tickers_file: config/tickers_with_names.yaml", config_text)
+        self.assertIn("training_universes_path: config/training_universes.yaml", config_text)
+        self.assertIn("model_registry_path: config/model_registry.yaml", config_text)
         self.assertIn("seed: 42", config_text)
         self.assertIn("benchmark_history_db_path: data/benchmarks_history.sqlite", config_text)
         self.assertIn("require_hash_validation: true", config_text)
@@ -92,6 +94,8 @@ class StaticRepoTests(unittest.TestCase):
             ROOT / "scripts" / "train.py",
             ROOT / "scripts" / "utils" / "artifact_utils.py",
             ROOT / "scripts" / "utils" / "lightning_compat.py",
+            ROOT / "scripts" / "utils" / "model_registry.py",
+            ROOT / "scripts" / "utils" / "training_universe.py",
             ROOT / "scripts" / "utils" / "yfinance_provider.py",
         ]
         for path in files_to_check:

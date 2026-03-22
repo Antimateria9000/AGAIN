@@ -95,6 +95,22 @@ class DataPreprocessor:
             categorical_features=KNOWN_CATEGORICAL_FEATURES,
         )
 
+    def _update_training_run_metadata(self, train_df: pd.DataFrame, val_df: pd.DataFrame) -> None:
+        if "training_run" not in self.config:
+            return
+        training_run = dict(self.config.get("training_run") or {})
+        requested_tickers = [str(ticker) for ticker in training_run.get("requested_tickers", [])]
+        downloaded_tickers = [str(ticker) for ticker in training_run.get("downloaded_tickers", requested_tickers)]
+        final_tickers_used = sorted(
+            dict.fromkeys(
+                pd.concat([train_df["Ticker"], val_df["Ticker"]], ignore_index=True).dropna().astype(str).tolist()
+            )
+        )
+        dropped_after_preprocessing = [ticker for ticker in downloaded_tickers if ticker not in final_tickers_used]
+        training_run["final_tickers_used"] = final_tickers_used
+        training_run["dropped_after_preprocessing"] = dropped_after_preprocessing
+        self.config["training_run"] = training_run
+
     def _apply_shared_transformations(self, df: pd.DataFrame, mode: str, ticker: str | None = None) -> tuple[pd.DataFrame, pd.Series | None, list[str]]:
         feature_engineer = FeatureEngineer()
         df = feature_engineer.add_features(df, sectors_list=self.config["model"]["sectors"])
@@ -147,6 +163,7 @@ class DataPreprocessor:
             if train_df.empty or val_df.empty:
                 raise ValueError(f"Split train/val vacio: train={len(train_df)}, val={len(val_df)}")
 
+            self._update_training_run_metadata(train_df, val_df)
             valid_numeric_features = [feature for feature in numeric_features if feature in train_df.columns]
             metadata = self._build_normalizer_metadata(valid_numeric_features)
             normalizers_path = Path(self.config_manager.get("paths.normalizers_dir")) / f"{self.model_name}_normalizers.pkl"

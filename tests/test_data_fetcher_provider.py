@@ -89,6 +89,8 @@ training:
   batch_size: 8
   auto_batch_size: false
   max_vram_usage: 0.8
+training_universe:
+  minimum_group_tickers: 2
 prediction:
   years: 1
   batch_size: 8
@@ -111,6 +113,9 @@ paths:
   models_dir: {self.root / "models"}
   normalizers_dir: {self.root / "models" / "normalizers"}
   config_dir: {self.root / "config"}
+  runtime_profiles_dir: {self.root / "config" / "runtime_profiles"}
+  training_universes_path: {self.root / "config" / "training_universes.yaml"}
+  model_registry_path: {self.root / "config" / "model_registry.yaml"}
   logs_dir: {self.root / "logs"}
   benchmark_history_db_path: {self.root / "data" / "benchmarks_history.sqlite"}
 artifacts:
@@ -120,6 +125,10 @@ artifacts:
         self.config_path.write_text(config_text, encoding="utf-8")
         (self.root / "config" / "tickers.yaml").write_text("tickers:\n  usa:\n    AAPL: Apple\n    MSFT: Microsoft\n", encoding="utf-8")
         (self.root / "config" / "benchmark_tickers.yaml").write_text("tickers:\n  usa:\n    AAPL: Apple\n", encoding="utf-8")
+        (self.root / "config" / "training_universes.yaml").write_text(
+            "groups:\n  smoke_group:\n    label: Grupo smoke\n    enabled: true\n    tickers:\n      - AAPL\n      - MSFT\n",
+            encoding="utf-8",
+        )
         self.config_manager = ConfigManager(str(self.config_path))
 
     def tearDown(self):

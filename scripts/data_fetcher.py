@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 
@@ -12,6 +13,14 @@ from .runtime_config import ConfigManager
 from .utils.yfinance_provider import FetchResult, YFinanceProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FetchUniverseReport:
+    requested_tickers: list[str]
+    successful_tickers: list[str]
+    discarded_tickers: list[str]
+    discarded_details: dict[str, str]
 
 
 class DataFetcher:
@@ -198,14 +207,20 @@ class DataFetcher:
             return self._fallback_from_local_raw_data(ticker, start_date, end_date)
 
     def fetch_many_stocks(self, tickers: list[str], start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        combined, _ = self.fetch_many_stocks_with_report(tickers, start_date, end_date)
+        return combined
+
+    def fetch_many_stocks_with_report(self, tickers: list[str], start_date: datetime, end_date: datetime) -> tuple[pd.DataFrame, FetchUniverseReport]:
         if not tickers:
-            return pd.DataFrame()
+            return pd.DataFrame(), FetchUniverseReport([], [], [], {})
 
         results = []
         start_date = self._normalize_date(start_date)
         end_date = self._normalize_date(end_date)
         adjusted_start_date = start_date - timedelta(days=self.extra_days)
         normalized_tickers = [str(ticker).strip().upper() for ticker in tickers if str(ticker).strip()]
+        discarded_details: dict[str, str] = {}
+        successful_tickers: list[str] = []
 
         try:
             bundle = self.provider.get_history_bundle(
@@ -227,8 +242,10 @@ class DataFetcher:
                 fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
                 if fallback.empty:
                     logger.warning("Se omite %s por falta de datos", ticker)
+                    discarded_details[ticker] = "Sin datos descargados ni fallback local"
                     continue
                 results.append(fallback)
+                successful_tickers.append(ticker)
                 continue
 
             prepared = self._prepare_output_frame(ticker, frame)
@@ -237,13 +254,21 @@ class DataFetcher:
                 fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
                 if fallback.empty:
                     logger.warning("Se omite %s por falta de datos utiles", ticker)
+                    discarded_details[ticker] = "Sin datos utiles tras filtrar el rango solicitado"
                     continue
                 results.append(fallback)
+                successful_tickers.append(ticker)
                 continue
             results.append(prepared)
+            successful_tickers.append(ticker)
 
         if not results:
-            return pd.DataFrame()
+            return pd.DataFrame(), FetchUniverseReport(
+                requested_tickers=normalized_tickers,
+                successful_tickers=[],
+                discarded_tickers=list(discarded_details.keys()),
+                discarded_details=discarded_details,
+            )
 
         combined = pd.concat(results, ignore_index=True)
         combined["Sector"] = pd.Categorical(
@@ -251,13 +276,30 @@ class DataFetcher:
             categories=self.config["model"]["sectors"],
             ordered=False,
         )
-        return combined
+        report = FetchUniverseReport(
+            requested_tickers=normalized_tickers,
+            successful_tickers=list(dict.fromkeys(successful_tickers)),
+            discarded_tickers=[ticker for ticker in normalized_tickers if ticker not in successful_tickers],
+            discarded_details=discarded_details,
+        )
+        return combined, report
+
+    def fetch_training_universe(self, tickers: list[str]) -> tuple[pd.DataFrame, FetchUniverseReport]:
+        end_date = datetime.now().replace(tzinfo=None)
+        start_date = end_date - timedelta(days=self.years * 365)
+        combined, report = self.fetch_many_stocks_with_report(tickers, start_date, end_date)
+        if combined.empty:
+            return combined, report
+        self.raw_data_path.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_csv(self.raw_data_path, index=False)
+        logger.info("Datos del universo de entrenamiento guardados en %s", self.raw_data_path)
+        return combined, report
 
     def fetch_global_stocks(self, region: str | None = None) -> pd.DataFrame:
         end_date = datetime.now().replace(tzinfo=None)
         start_date = end_date - timedelta(days=self.years * 365)
         tickers = self.config.get("data", {}).get("tickers") or self._load_tickers(region)
-        combined = self.fetch_many_stocks(tickers, start_date, end_date)
+        combined, _ = self.fetch_many_stocks_with_report(tickers, start_date, end_date)
         if combined.empty:
             logger.error("No se ha podido descargar ningun ticker")
             return combined

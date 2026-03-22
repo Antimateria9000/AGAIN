@@ -37,6 +37,7 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
         "training.reduce_lr_patience",
         "training.reduce_lr_factor",
         "training.weight_decay",
+        "training_universe.minimum_group_tickers",
         "prediction.years",
         "prediction.batch_size",
         "validation.debug",
@@ -54,6 +55,9 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
         "paths.models_dir",
         "paths.normalizers_dir",
         "paths.config_dir",
+        "paths.runtime_profiles_dir",
+        "paths.training_universes_path",
+        "paths.model_registry_path",
         "paths.logs_dir",
     ]
     for key in required_keys:
@@ -111,9 +115,15 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     resolved.setdefault("paths", {})
     resolved["paths"].setdefault("benchmark_history_db_path", "data/benchmarks_history.sqlite")
     resolved["paths"].setdefault("model_save_path", str(Path(resolved["paths"]["models_dir"]) / f"{model_name}.pth"))
+    resolved["paths"].setdefault("runtime_profiles_dir", str(Path(resolved["paths"]["config_dir"]) / "runtime_profiles"))
+    resolved["paths"].setdefault("training_universes_path", str(Path(resolved["paths"]["config_dir"]) / "training_universes.yaml"))
+    resolved["paths"].setdefault("model_registry_path", str(Path(resolved["paths"]["config_dir"]) / "model_registry.yaml"))
 
     resolved.setdefault("artifacts", {})
     resolved["artifacts"].setdefault("require_hash_validation", True)
+
+    resolved.setdefault("training_universe", {})
+    resolved["training_universe"].setdefault("minimum_group_tickers", 2)
 
     resolved.setdefault("data_fetch", {})
     resolved["data_fetch"].setdefault("max_workers", 1)

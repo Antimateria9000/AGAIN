@@ -59,6 +59,9 @@ training:
   accelerator: auto
   precision: auto
 
+training_universe:
+  minimum_group_tickers: 2
+
 prediction:
   years: 3
   batch_size: 128
@@ -98,6 +101,9 @@ paths:
   models_dir: models
   normalizers_dir: models/normalizers
   config_dir: config
+  runtime_profiles_dir: config/runtime_profiles
+  training_universes_path: config/training_universes.yaml
+  model_registry_path: config/model_registry.yaml
   logs_dir: logs
   benchmark_history_db_path: data/benchmarks_history.sqlite
 
