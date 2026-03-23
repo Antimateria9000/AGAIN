@@ -17,7 +17,7 @@ authors = [
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["app*", "scripts*", "tests*"]
+include = ["again_econ*", "app*", "scripts*", "tests*"]
 
 [tool.setuptools.package-data]
 app = ["*.py"]
