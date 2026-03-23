@@ -9,7 +9,7 @@ from tests.again_econ_test_utils import build_single_symbol_market
 
 
 def test_backtest_manifest_and_outputs_are_reproducible(tmp_path):
-    market = build_single_symbol_market([10, 10, 11, 12, 12], [10, 10, 12, 12, 12])
+    market = build_single_symbol_market([10, 10, 10, 11, 12], [10, 10, 10, 11, 12])
     timestamps = market.timestamps()
     bundle_path = tmp_path / "repro_forecasts.json"
     payload = {
@@ -18,15 +18,15 @@ def test_backtest_manifest_and_outputs_are_reproducible(tmp_path):
         "records": [
             {
                 "instrument_id": "AAA",
-                "decision_timestamp": timestamps[1].isoformat(),
-                "available_at": timestamps[1].isoformat(),
+                "decision_timestamp": timestamps[2].isoformat(),
+                "available_at": timestamps[2].isoformat(),
                 "target_kind": "return",
                 "value": 0.05,
             },
             {
                 "instrument_id": "AAA",
-                "decision_timestamp": timestamps[2].isoformat(),
-                "available_at": timestamps[2].isoformat(),
+                "decision_timestamp": timestamps[3].isoformat(),
+                "available_at": timestamps[3].isoformat(),
                 "target_kind": "return",
                 "value": -0.01,
             },
@@ -45,4 +45,5 @@ def test_backtest_manifest_and_outputs_are_reproducible(tmp_path):
     assert first.manifest.run_id == second.manifest.run_id
     assert first.manifest.input_fingerprint == second.manifest.input_fingerprint
     assert first.summary_metrics == second.summary_metrics
+    assert first.oos_curve == second.oos_curve
     assert first.windows[0].trades == second.windows[0].trades

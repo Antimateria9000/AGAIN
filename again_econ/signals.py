@@ -19,6 +19,12 @@ def translate_forecasts_to_signals(
     forecasts: tuple[ForecastRecord, ...],
     config: SignalConfig,
 ) -> tuple[SignalRecord, ...]:
+    """Translate supported forecast targets into explicit long/flat signals.
+
+    This V1 is intentionally narrow: direct signal payloads bypass this translator,
+    while forecast translation only supports price, return, direction and score.
+    """
+
     signals = []
     for record in sorted(forecasts, key=lambda item: (item.decision_timestamp, item.instrument_id)):
         score = _resolve_forecast_score(record)
@@ -33,6 +39,7 @@ def translate_forecasts_to_signals(
                 available_at=record.available_at,
                 target_state=target_state,
                 score=score,
+                provenance=record.provenance,
                 metadata={"target_kind": record.target_kind.value, **record.metadata},
             )
         )

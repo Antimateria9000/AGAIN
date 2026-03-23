@@ -30,6 +30,13 @@ def test_translate_forecasts_to_long_only_signals_for_supported_targets():
             target_kind=TargetKind.DIRECTION,
             value=1.0,
         ),
+        ForecastRecord(
+            instrument_id="DDD",
+            decision_timestamp=decision_timestamp,
+            available_at=decision_timestamp,
+            target_kind=TargetKind.SCORE,
+            value=0.02,
+        ),
     )
 
     signals = translate_forecasts_to_signals(forecasts, SignalConfig(long_threshold=0.01))
@@ -37,3 +44,4 @@ def test_translate_forecasts_to_long_only_signals_for_supported_targets():
     assert signals[0].target_state == PositionTarget.LONG
     assert signals[1].target_state == PositionTarget.FLAT
     assert signals[2].target_state == PositionTarget.LONG
+    assert signals[3].target_state == PositionTarget.LONG

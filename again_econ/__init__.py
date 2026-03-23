@@ -1,8 +1,14 @@
 from again_econ.config import BacktestConfig, ExecutionConfig, SignalConfig, WalkforwardConfig, load_backtest_config
 from again_econ.contracts import (
     BacktestResult,
+    BundleProvenance,
+    BundleProvenanceMode,
+    DiscardReason,
+    DiscardedSignal,
+    ExecutionReason,
     FillEvent,
     ForecastRecord,
+    GlobalOOSPoint,
     InputBundle,
     MarketBar,
     MarketFrame,
@@ -17,6 +23,7 @@ from again_econ.contracts import (
     TargetKind,
     TradeRecord,
     WalkforwardWindow,
+    WindowProvenance,
     WindowResult,
 )
 from again_econ.runner import run_backtest, run_backtest_from_bundle
@@ -24,9 +31,15 @@ from again_econ.runner import run_backtest, run_backtest_from_bundle
 __all__ = [
     "BacktestConfig",
     "BacktestResult",
+    "BundleProvenance",
+    "BundleProvenanceMode",
+    "DiscardReason",
+    "DiscardedSignal",
     "ExecutionConfig",
+    "ExecutionReason",
     "FillEvent",
     "ForecastRecord",
+    "GlobalOOSPoint",
     "InputBundle",
     "MarketBar",
     "MarketFrame",
@@ -43,6 +56,7 @@ __all__ = [
     "TradeRecord",
     "WalkforwardConfig",
     "WalkforwardWindow",
+    "WindowProvenance",
     "WindowResult",
     "load_backtest_config",
     "run_backtest",

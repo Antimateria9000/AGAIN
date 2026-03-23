@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from again_econ.contracts import MarketBar, MarketFrame
 
@@ -32,3 +32,21 @@ def build_single_symbol_market(
             )
         )
     return MarketFrame(bars=tuple(bars))
+
+
+def build_multi_symbol_market(
+    symbol_to_opens: dict[str, list[float]],
+    *,
+    symbol_to_closes: dict[str, list[float]] | None = None,
+    start: datetime | None = None,
+) -> MarketFrame:
+    all_bars = []
+    for symbol, opens in sorted(symbol_to_opens.items()):
+        closes = symbol_to_closes[symbol] if symbol_to_closes is not None else None
+        market = build_single_symbol_market(opens, closes, symbol=symbol, start=start)
+        all_bars.extend(market.bars)
+    return MarketFrame(bars=tuple(sorted(all_bars, key=lambda bar: (bar.timestamp, bar.instrument_id))))
+
+
+def aware_utc_datetime(year: int, month: int, day: int) -> datetime:
+    return datetime(year, month, day, tzinfo=timezone.utc)

@@ -17,9 +17,33 @@ No es un sistema listo para inversion real. El alcance actual es investigacion a
 
 ## Lo que NO hace hoy
 
-- No implementa un backtest economico completo
-- No incluye costes, slippage ni reglas operativas finales
+- El pipeline TFT principal no implementa un backtest economico integrado
 - No debe interpretarse como un sistema de trading listo para produccion
+- No cubre live trading, intradia, short selling general ni ejecucion de mercado real
+
+## Modulo economico `again_econ`
+
+El repositorio incluye un modulo economico independiente llamado `again_econ`. Su alcance actual es una v1 sobria y desacoplada para evaluacion economica out-of-sample:
+
+- walk-forward con ventanas de test economicamente independientes
+- long-only sobre daily bars
+- senal calculada al cierre y ejecucion en la apertura siguiente
+- comisiones y slippage simples y deterministas
+- ledger, trades y snapshots reproducibles
+- frontera estable mediante bundles JSON de forecasts o signals
+
+Garantias metodologicas de esta v1:
+
+- no hay carry-over de posiciones entre ventanas
+- las senales cuya `next open` cae fuera de la ventana se descartan de forma explicita
+- las posiciones abiertas al final de la ventana se clausuran administrativamente en la ultima barra OOS
+- el resumen global OOS se calcula desde una curva chain-linked, no desde medias ingenuas de metricas por ventana
+
+Limitaciones explicitas de `again_econ`:
+
+- no sustituye al benchmark estadistico principal del pipeline TFT
+- no soporta todavia intradia, margin, borrow, derivados ni politicas avanzadas de portfolio
+- no es una mini-fork de PyBroker ni depende de internals fragiles del pipeline principal
 
 ## Requisitos
 
@@ -63,7 +87,7 @@ streamlit run streamlit_app.py
 ### Suite completa del repositorio
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py" -v
+python -m pytest tests -q
 ```
 
 ### Smoke test del pipeline
@@ -71,7 +95,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 Este test crea un dataset sintetico, entrena una ejecucion minima y valida inferencia y artefactos:
 
 ```bash
-python -m unittest tests.test_smoke_pipeline -v
+python -m pytest tests/test_smoke_pipeline.py -q
 ```
 
 ## Configuracion
@@ -122,6 +146,7 @@ scripts/
   utils/
 start_training.py
 tests/
+again_econ/
 requirements.txt
 requirements-dev.txt
 pyproject.toml

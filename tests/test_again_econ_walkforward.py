@@ -19,3 +19,4 @@ def test_walkforward_splitter_creates_non_overlapping_test_windows():
     assert windows[0].test_end == market.timestamps()[5]
     assert windows[1].train_start == market.timestamps()[2]
     assert windows[1].test_start == market.timestamps()[6]
+    assert windows[0].test_end < windows[1].test_start
