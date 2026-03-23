@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 FetchUniverseReport = UniverseIntegrityReport
 
 
+class FreshDataRequiredError(RuntimeError):
+    pass
+
+
 class DataFetcher:
     def __init__(self, config_manager: ConfigManager, years: int):
         self.config = config_manager.config
@@ -126,6 +130,53 @@ class DataFetcher:
                 errors.append(str(warning))
         return list(dict.fromkeys(errors))
 
+    @staticmethod
+    def _attach_fetch_provenance(
+        frame: pd.DataFrame,
+        *,
+        source: str,
+        detail: str | None = None,
+        errors: list[str] | None = None,
+        backend_used: str | None = None,
+    ) -> pd.DataFrame:
+        annotated = frame.copy()
+        annotated.attrs["fetch_provenance"] = {
+            "source": source,
+            "used_local_fallback": source == "local_cache",
+            "detail": detail,
+            "errors": list(dict.fromkeys(str(error) for error in (errors or []) if str(error))),
+            "backend_used": backend_used,
+        }
+        return annotated
+
+    def _resolve_single_fetch_fallback(
+        self,
+        ticker: str,
+        start_date: datetime,
+        end_date: datetime,
+        detail: str,
+        errors: list[str],
+        allow_local_fallback: bool,
+    ) -> pd.DataFrame:
+        fallback = self._fallback_from_local_raw_data(ticker, start_date, end_date)
+        if fallback.empty:
+            raise FreshDataRequiredError(
+                f"No se han podido obtener datos frescos para {ticker}. Detalle del proveedor: {detail}"
+            )
+        if not allow_local_fallback:
+            raise FreshDataRequiredError(
+                f"Se ha rechazado un fallback silencioso a cache local para {ticker}. "
+                f"Detalle del proveedor: {detail}"
+            )
+        logger.warning("Se acepta un fallback explicito a cache local para %s. Detalle del proveedor: %s", ticker, detail)
+        return self._attach_fetch_provenance(
+            fallback,
+            source="local_cache",
+            detail=detail,
+            errors=errors,
+            backend_used=None,
+        )
+
     def _fallback_from_local_raw_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         if not self.raw_data_path.exists():
             return self._empty_output_frame()
@@ -197,7 +248,13 @@ class DataFetcher:
             return value.replace(tzinfo=None)
         return value
 
-    def fetch_stock_data(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    def fetch_stock_data(
+        self,
+        ticker: str,
+        start_date: datetime,
+        end_date: datetime,
+        allow_local_fallback: bool = False,
+    ) -> pd.DataFrame:
         start_date = self._normalize_date(start_date)
         end_date = self._normalize_date(end_date)
         adjusted_start_date = start_date - timedelta(days=self.extra_days)
@@ -214,23 +271,62 @@ class DataFetcher:
             )
             if not isinstance(result, FetchResult):
                 logger.error("El provider devolvio un tipo inesperado para %s", ticker)
-                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
+                return self._resolve_single_fetch_fallback(
+                    ticker,
+                    start_date,
+                    end_date,
+                    "El provider devolvio un tipo inesperado",
+                    [],
+                    allow_local_fallback,
+                )
 
             df = result.data
+            provider_errors = self._collect_provider_errors(result)
+            backend_used = getattr(result.metadata, "backend_used", None)
             if df.empty:
                 detail = self._describe_provider_failure(result)
                 logger.warning("No hay datos descargados para %s. Detalle del proveedor: %s", ticker, detail)
-                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
+                return self._resolve_single_fetch_fallback(
+                    ticker,
+                    start_date,
+                    end_date,
+                    detail,
+                    provider_errors,
+                    allow_local_fallback,
+                )
 
             prepared = self._prepare_output_frame(ticker, df)
             prepared = prepared[prepared["Date"] >= pd.Timestamp(start_date)].reset_index(drop=True)
             if prepared.empty:
+                detail = "Sin datos utiles tras filtrar el rango solicitado"
                 logger.warning("No hay datos utiles para %s tras filtrar el rango solicitado", ticker)
-                return self._fallback_from_local_raw_data(ticker, start_date, end_date)
-            return prepared
+                return self._resolve_single_fetch_fallback(
+                    ticker,
+                    start_date,
+                    end_date,
+                    detail,
+                    provider_errors,
+                    allow_local_fallback,
+                )
+            return self._attach_fetch_provenance(
+                prepared,
+                source="fresh_network",
+                detail=None,
+                errors=provider_errors,
+                backend_used=backend_used,
+            )
+        except FreshDataRequiredError:
+            raise
         except Exception as exc:
             logger.error("Error al descargar %s: %s", ticker, exc)
-            return self._fallback_from_local_raw_data(ticker, start_date, end_date)
+            return self._resolve_single_fetch_fallback(
+                ticker,
+                start_date,
+                end_date,
+                str(exc),
+                [str(exc)],
+                allow_local_fallback,
+            )
 
     def fetch_many_stocks(self, tickers: list[str], start_date: datetime, end_date: datetime) -> pd.DataFrame:
         combined, _ = self.fetch_many_stocks_with_report(tickers, start_date, end_date)
@@ -343,8 +439,14 @@ class DataFetcher:
             return combined
         return combined
 
-    def fetch_stock_data_sync(self, ticker: str, start_date: datetime, end_date: datetime) -> pd.DataFrame:
-        return self.fetch_stock_data(ticker, start_date, end_date)
+    def fetch_stock_data_sync(
+        self,
+        ticker: str,
+        start_date: datetime,
+        end_date: datetime,
+        allow_local_fallback: bool = False,
+    ) -> pd.DataFrame:
+        return self.fetch_stock_data(ticker, start_date, end_date, allow_local_fallback=allow_local_fallback)
 
 
 if __name__ == "__main__":

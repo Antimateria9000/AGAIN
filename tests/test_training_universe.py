@@ -303,6 +303,74 @@ class TrainingUniverseTests(unittest.TestCase):
         self.assertFalse(canonical_raw.exists())
 
     @mock.patch("start_training.train_model")
+    @mock.patch("start_training.transfer_weights")
+    @mock.patch("start_training.build_model")
+    @mock.patch("start_training.DataPreprocessor")
+    @mock.patch("start_training.DataFetcher")
+    def test_start_training_usa_paths_normalizers_dir_en_transfer_learning(
+        self,
+        fetcher_cls,
+        preprocessor_cls,
+        build_model_mock,
+        transfer_weights_mock,
+        train_model_mock,
+    ):
+        config_path = self.root / "config" / "config.yaml"
+        config_payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        custom_normalizers_dir = self.root / "artifacts" / "custom_normalizers"
+        config_payload["paths"]["normalizers_dir"] = str(custom_normalizers_dir)
+        config_path.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
+        old_checkpoint_path = self.root / "models" / "old_model.pth"
+        old_checkpoint_path.write_bytes(b"checkpoint")
+
+        sample_df = pd.DataFrame(
+            [
+                {
+                    "Date": pd.Timestamp("2024-01-02"),
+                    "Open": 10.0,
+                    "High": 11.0,
+                    "Low": 9.0,
+                    "Close": 10.5,
+                    "Volume": 1000,
+                    "Ticker": "BBVA.MC",
+                    "Sector": "Financials",
+                }
+            ]
+        )
+        fetcher_cls.return_value.fetch_training_universe.return_value = (
+            sample_df,
+            FetchUniverseReport(
+                requested_tickers=["BBVA.MC"],
+                successful_tickers=["BBVA.MC"],
+                discarded_tickers=[],
+                discarded_details={},
+                decision="CONTINUE_CLEAN",
+                training_allowed=True,
+                can_promote_canonical=True,
+            ),
+        )
+        preprocessor_cls.return_value.process_data.return_value = ("train_dataset", "val_dataset")
+        build_model_mock.return_value = object()
+        train_model_mock.return_value = object()
+
+        start_training(
+            config_path=str(config_path),
+            years=3,
+            use_optuna=False,
+            continue_training=False,
+            use_transfer_learning=True,
+            old_model_filename="old_model.pth",
+            training_universe_mode="single_ticker",
+            single_ticker_symbol="BBVA.MC",
+        )
+
+        transfer_weights_mock.assert_called_once()
+        self.assertEqual(
+            Path(transfer_weights_mock.call_args.kwargs["normalizers_path"]),
+            custom_normalizers_dir / "Gen6_1__single__BBVA_MC_normalizers.pkl",
+        )
+
+    @mock.patch("start_training.train_model")
     @mock.patch("start_training.DataPreprocessor")
     @mock.patch("start_training.DataFetcher")
     def test_start_training_marca_run_degradado_sin_promocionar_dataset_canonico(self, fetcher_cls, preprocessor_cls, train_model_mock):

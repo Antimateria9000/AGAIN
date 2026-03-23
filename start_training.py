@@ -317,18 +317,7 @@ def start_training(
 
     logger.info("Preprocesando datos...")
     model_name = config["model_name"]
-    normalizers_path = Path(config["paths"]["models_dir"]) / "normalizers" / f"{model_name}_normalizers.pkl"
-
-    if use_transfer_learning and old_model_filename:
-        old_model_name = old_model_filename.replace(".pth", "")
-        old_normalizers_path = Path(config["paths"]["models_dir"]) / "normalizers" / f"{old_model_name}_normalizers.pkl"
-        if old_normalizers_path.exists():
-            shutil.copy2(old_normalizers_path, normalizers_path)
-            old_checksum = old_normalizers_path.with_name(f"{old_normalizers_path.name}.sha256")
-            if old_checksum.exists():
-                shutil.copy2(old_checksum, normalizers_path.with_name(f"{normalizers_path.name}.sha256"))
-        else:
-            logger.warning("No existen normalizadores previos en %s; se regeneraran", old_normalizers_path)
+    normalizers_path = Path(config["paths"]["normalizers_dir"]) / f"{model_name}_normalizers.pkl"
 
     preprocessor = DataPreprocessor(config)
     dataset = preprocessor.process_data(mode="train", df=df)

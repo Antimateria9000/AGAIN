@@ -201,3 +201,6 @@ lightning_logs/
 
 # Checkpoints temporales o locales no canonicos.
 best_tft_checkpoint.pth
+
+.codex_pycache/
+.matplotlib-cache/

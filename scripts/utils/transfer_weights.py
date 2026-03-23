@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import logging
 import pickle
-import shutil
 from pathlib import Path
 
 import torch
 
 from scripts.model import CustomTemporalFusionTransformer
 from scripts.utils.artifact_utils import ensure_relative_to, verify_checksum, write_checksum, write_metadata
-from scripts.utils.data_schema import REQUIRED_NORMALIZER_KEYS, metadata_matches_active_schema
+from scripts.utils.data_schema import REQUIRED_NORMALIZER_KEYS, build_artifact_metadata, metadata_matches_active_schema
 
 logger = logging.getLogger(__name__)
 
@@ -46,38 +45,37 @@ def transfer_weights(old_checkpoint_path: str, new_model: CustomTemporalFusionTr
     logger.info("Se han transferido %s de %s tensores", transferred_keys, len(new_state_dict))
     new_model.load_state_dict(transferred_state_dict)
 
-    models_dir = Path(config["paths"]["models_dir"])
-    old_normalizers_path = models_dir / "normalizers" / f"{old_checkpoint_path.stem}_normalizers.pkl"
-    if not old_normalizers_path.exists():
-        raise FileNotFoundError(f"No existe el fichero de normalizadores {old_normalizers_path}")
-
-    old_normalizers, old_metadata = _load_normalizer_payload(old_normalizers_path)
-    missing_numeric = set(REQUIRED_NORMALIZER_KEYS) - set(old_normalizers.keys())
+    normalizers_path = Path(normalizers_path)
+    ensure_relative_to(normalizers_path, Path(config["paths"]["normalizers_dir"]))
+    if not normalizers_path.exists():
+        raise FileNotFoundError(f"No existe el fichero de normalizadores destino {normalizers_path}")
+    verify_checksum(normalizers_path, required=config["artifacts"]["require_hash_validation"])
+    destination_normalizers, destination_metadata = _load_normalizer_payload(normalizers_path)
+    missing_numeric = set(REQUIRED_NORMALIZER_KEYS) - set(destination_normalizers.keys())
     if missing_numeric:
-        raise ValueError(f"Los normalizadores origen no cubren el esquema numerico actual: {sorted(missing_numeric)}")
+        raise ValueError(f"Los normalizadores destino no cubren el esquema numerico actual: {sorted(missing_numeric)}")
 
-    if old_metadata is not None:
-        if not metadata_matches_active_schema(config, old_metadata):
-            raise ValueError("Los normalizadores origen no son compatibles con la configuracion actual")
-
-    normalizers_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(old_normalizers_path, normalizers_path)
-    old_checksum = old_normalizers_path.with_name(f"{old_normalizers_path.name}.sha256")
-    if old_checksum.exists():
-        shutil.copy2(old_checksum, normalizers_path.with_name(f"{normalizers_path.name}.sha256"))
-    else:
-        write_checksum(normalizers_path)
+    if destination_metadata is None or not metadata_matches_active_schema(config, destination_metadata):
+        raise ValueError("Los normalizadores destino no son compatibles con la configuracion actual")
 
     config["paths"]["model_save_path"] = str(Path(config["paths"]["models_dir"]) / f"{config['model_name']}.pth")
+    transfer_metadata = build_artifact_metadata(
+        config,
+        extra={
+            "transfer_learning": {
+                "source_checkpoint": old_checkpoint_path.name,
+                "source_model_name": old_checkpoint.get("metadata", {}).get("model_name"),
+            }
+        },
+    )
     checkpoint = {
         "state_dict": new_model.state_dict(),
         "hyperparams": dict(new_model.hparams),
-        "metadata": old_checkpoint.get("metadata"),
+        "metadata": transfer_metadata,
     }
     checkpoint_path = Path(config["paths"]["model_save_path"])
     torch.save(checkpoint, checkpoint_path)
-    if checkpoint.get("metadata"):
-        write_metadata(checkpoint_path, checkpoint["metadata"])
+    write_metadata(checkpoint_path, checkpoint["metadata"])
     write_checksum(checkpoint_path)
     logger.info("Modelo con pesos transferidos guardado en %s", checkpoint_path)
     return new_model, config

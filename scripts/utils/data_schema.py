@@ -111,7 +111,7 @@ def build_artifact_metadata(
 def metadata_matches_active_schema(config: Dict[str, Any], metadata: Dict[str, Any] | None) -> bool:
     if not metadata:
         return False
-    return metadata.get("schema_hash") == build_schema_hash(config)
+    return metadata.get("schema_hash") == build_schema_hash(config) and metadata.get("config_hash") == build_config_hash(config)
 
 
 def normalize_feature_list(features: Iterable[str]) -> List[str]:

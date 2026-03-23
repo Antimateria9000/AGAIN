@@ -1,3 +1,4 @@
+import copy
 import pickle
 import tempfile
 import unittest
@@ -105,8 +106,8 @@ class ModelReadinessIntegrityTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def _write_artifacts(self, training_run_metadata: dict) -> None:
-        config = dict(self.config)
+    def _write_artifacts(self, training_run_metadata: dict) -> dict:
+        config = copy.deepcopy(self.config)
         config["training_run"] = training_run_metadata
         metadata = build_artifact_metadata(config)
 
@@ -122,12 +123,13 @@ class ModelReadinessIntegrityTests(unittest.TestCase):
         write_checksum(normalizers_path)
 
         dataset_path = Path(config["data"]["processed_data_path"])
-        dataset_path.write_bytes(b"dummy-dataset")
+        torch.save({"dataset": "ok"}, dataset_path)
         write_metadata(dataset_path, metadata)
         write_checksum(dataset_path)
+        return config
 
     def test_model_readiness_rejects_semantically_invalid_universe(self):
-        self._write_artifacts(
+        config = self._write_artifacts(
             {
                 "mode": "predefined_group",
                 "requested_tickers": ["AAPL", "MSFT"],
@@ -139,13 +141,13 @@ class ModelReadinessIntegrityTests(unittest.TestCase):
             }
         )
 
-        report = assess_model_readiness(self.config)
+        report = assess_model_readiness(config)
 
         self.assertFalse(report.ready)
         self.assertTrue(any("semanticamente invalido" in issue for issue in report.issues))
 
     def test_model_readiness_accepts_degraded_allowed_with_warning_summary(self):
-        self._write_artifacts(
+        config = self._write_artifacts(
             {
                 "mode": "predefined_group",
                 "requested_tickers": ["AAPL", "MSFT"],
@@ -158,10 +160,49 @@ class ModelReadinessIntegrityTests(unittest.TestCase):
             }
         )
 
-        report = assess_model_readiness(self.config)
+        report = assess_model_readiness(config)
 
         self.assertTrue(report.ready)
         self.assertIn("degradado", report.summary.lower())
+
+    def test_model_readiness_rejects_artifacts_with_same_schema_but_distinct_config_hash(self):
+        config = self._write_artifacts(
+            {
+                "mode": "predefined_group",
+                "requested_tickers": ["AAPL", "MSFT"],
+                "universe_integrity": {
+                    "decision": "CONTINUE_CLEAN",
+                    "training_allowed": True,
+                },
+            }
+        )
+        reconfigured = copy.deepcopy(config)
+        reconfigured["training"]["batch_size"] = 32
+
+        report = assess_model_readiness(reconfigured)
+
+        self.assertFalse(report.ready)
+        self.assertTrue(any("no coincide con el esquema activo" in issue.lower() for issue in report.issues))
+
+    def test_model_readiness_rejects_processed_dataset_no_deserializable(self):
+        config = self._write_artifacts(
+            {
+                "mode": "predefined_group",
+                "requested_tickers": ["AAPL", "MSFT"],
+                "universe_integrity": {
+                    "decision": "CONTINUE_CLEAN",
+                    "training_allowed": True,
+                },
+            }
+        )
+        dataset_path = Path(config["data"]["processed_data_path"])
+        dataset_path.write_bytes(b"dataset-corrupto")
+        write_checksum(dataset_path)
+
+        report = assess_model_readiness(config)
+
+        self.assertFalse(report.ready)
+        self.assertTrue(any("dataset procesado invalido" in issue.lower() for issue in report.issues))
 
 
 if __name__ == "__main__":

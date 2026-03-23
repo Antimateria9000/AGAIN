@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from pathlib import Path
 
@@ -82,14 +83,85 @@ def ensure_relative_to(path: Path, base_dir: Path) -> None:
         raise ValueError(f"La ruta {resolved_path} no esta dentro de {resolved_base}")
 
 
+_SAFE_GLOBAL_ALLOWED_PREFIXES = (
+    "numpy.",
+    "pandas.",
+    "pytorch_forecasting.",
+    "sklearn.preprocessing.",
+)
+_SAFE_GLOBAL_ALLOWED_NAMES = {
+    "builtins.slice",
+}
+
+
+def _resolve_default_safe_globals() -> list[object]:
+    resolved: list[object] = []
+    try:
+        import numpy as np
+    except Exception:
+        return resolved
+
+    resolved.extend([np.dtype, np.ndarray])
+    dtype_module = getattr(np, "dtypes", None)
+    if dtype_module is not None:
+        resolved.extend(value for value in vars(dtype_module).values() if isinstance(value, type))
+    return resolved
+
+
+def _resolve_global_reference(reference: str):
+    module_name, _, attribute_path = reference.rpartition(".")
+    if not module_name or not attribute_path:
+        return None
+    try:
+        current = importlib.import_module(module_name)
+    except Exception:
+        return None
+    for attribute in attribute_path.split("."):
+        if not hasattr(current, attribute):
+            return None
+        current = getattr(current, attribute)
+    return current
+
+
+def _resolve_checkpoint_safe_globals(path: Path) -> list[object]:
+    getter = getattr(torch.serialization, "get_unsafe_globals_in_checkpoint", None)
+    if getter is None:
+        return []
+
+    resolved: list[object] = []
+    for reference in getter(path):
+        if reference not in _SAFE_GLOBAL_ALLOWED_NAMES and not reference.startswith(_SAFE_GLOBAL_ALLOWED_PREFIXES):
+            continue
+        global_object = _resolve_global_reference(reference)
+        if global_object is not None:
+            resolved.append(global_object)
+    return resolved
+
+
 def load_trusted_torch_artifact(path: Path, trusted_types: list[type] | None = None):
     trusted_types = trusted_types or []
     safe_globals_context = getattr(torch.serialization, "safe_globals", None)
+    load_kwargs = {"map_location": "cpu", "weights_only": True}
     if safe_globals_context is not None and trusted_types:
         try:
-            with safe_globals_context(trusted_types):
-                return torch.load(path, map_location="cpu")
-        except Exception:
-            pass
-    return torch.load(path, map_location="cpu", weights_only=False)
+            safe_globals = list(
+                dict.fromkeys(
+                    [
+                        *trusted_types,
+                        *_resolve_default_safe_globals(),
+                        *_resolve_checkpoint_safe_globals(path),
+                    ]
+                )
+            )
+            with safe_globals_context(safe_globals):
+                return torch.load(path, **load_kwargs)
+        except Exception as exc:
+            trusted_names = ", ".join(sorted({trusted_type.__name__ for trusted_type in trusted_types})) or "sin tipos"
+            raise ValueError(
+                f"No se ha podido cargar el artefacto {path} con una whitelist segura de tipos [{trusted_names}]"
+            ) from exc
+    try:
+        return torch.load(path, **load_kwargs)
+    except Exception as exc:
+        raise ValueError(f"No se ha podido cargar el artefacto {path} de forma segura") from exc
 

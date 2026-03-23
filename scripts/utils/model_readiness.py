@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from scripts.utils.artifact_utils import ensure_relative_to, read_metadata, verify_checksum
+from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
 from scripts.utils.data_schema import metadata_matches_active_schema
 
 
@@ -32,6 +32,12 @@ def _load_normalizers_metadata(normalizers_path: Path) -> dict | None:
     if isinstance(payload, dict) and "metadata" in payload:
         return payload.get("metadata")
     return None
+
+
+def _load_processed_dataset(dataset_path: Path):
+    from pytorch_forecasting import TimeSeriesDataSet
+
+    return load_trusted_torch_artifact(dataset_path, trusted_types=[TimeSeriesDataSet])
 
 
 def _universe_semantically_valid(metadata: dict | None) -> tuple[bool, str | None]:
@@ -111,6 +117,7 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
             elif not _schema_matches(config, dataset_metadata):
                 issues.append(f"El dataset procesado no coincide con el esquema activo: {dataset_path}")
             else:
+                _load_processed_dataset(dataset_path)
                 universe_ok, detail = _universe_semantically_valid(dataset_metadata)
                 if not universe_ok:
                     issues.append(f"El dataset procesado proviene de un universo semanticamente invalido: {detail}")

@@ -94,3 +94,4 @@ class ConfigManager:
             logger.info(f"Normalizadores guardados en {normalizers_path}")
         except Exception as e:
             logger.error(f"Error al guardar normalizadores: {e}")
+            raise

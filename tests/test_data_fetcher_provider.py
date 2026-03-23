@@ -7,7 +7,7 @@ from unittest import mock
 import pandas as pd
 from yfinance.exceptions import YFRateLimitError
 
-from scripts.data_fetcher import DataFetcher
+from scripts.data_fetcher import DataFetcher, FreshDataRequiredError
 from scripts.runtime_config import ConfigManager
 from scripts.utils.yfinance_provider import DownloadAttempt, FetchMetadata, FetchResult, YFinanceProvider
 
@@ -215,7 +215,33 @@ artifacts:
 
         self.assertEqual(provider.session_backend, "requests")
 
-    def test_fetch_stock_data_usa_cache_local_si_falla_la_descarga(self):
+    def test_fetch_stock_data_rechaza_fallback_local_silencioso_por_defecto(self):
+        cached = pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+                "Open": [100.0, 101.0, 102.0],
+                "High": [101.0, 102.0, 103.0],
+                "Low": [99.0, 100.0, 101.0],
+                "Close": [100.5, 101.5, 102.5],
+                "Volume": [1_000_000, 1_100_000, 1_200_000],
+                "Ticker": ["AAPL", "AAPL", "AAPL"],
+                "Sector": ["Technology", "Technology", "Technology"],
+            }
+        )
+        raw_path = Path(self.config_manager.config["data"]["raw_data_path"])
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        cached.to_csv(raw_path, index=False)
+
+        fetcher = DataFetcher(self.config_manager, years=1)
+        with mock.patch.object(fetcher.provider, "get_history_bundle", side_effect=RuntimeError("rate limit")):
+            with self.assertRaises(FreshDataRequiredError):
+                fetcher.fetch_stock_data(
+                    "AAPL",
+                    pd.Timestamp("2024-01-02").to_pydatetime(),
+                    pd.Timestamp("2024-01-10").to_pydatetime(),
+                )
+
+    def test_fetch_stock_data_permite_fallback_local_solo_si_se_pide_expresamente(self):
         cached = pd.DataFrame(
             {
                 "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
@@ -238,12 +264,15 @@ artifacts:
                 "AAPL",
                 pd.Timestamp("2024-01-02").to_pydatetime(),
                 pd.Timestamp("2024-01-10").to_pydatetime(),
+                allow_local_fallback=True,
             )
 
         self.assertFalse(result.empty)
         self.assertEqual(list(result.columns), ["Date", "Open", "High", "Low", "Close", "Volume", "Ticker", "Sector"])
         self.assertTrue((result["Ticker"] == "AAPL").all())
         self.assertTrue((result["Sector"] == "Technology").all())
+        self.assertEqual(result.attrs["fetch_provenance"]["source"], "local_cache")
+        self.assertTrue(result.attrs["fetch_provenance"]["used_local_fallback"])
 
     def test_fetch_many_stocks_mantiene_el_contrato_actual(self):
         fetcher = DataFetcher(self.config_manager, years=1)

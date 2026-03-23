@@ -61,8 +61,9 @@ class DataPreprocessor:
             if not val_group.empty:
                 vals.append(val_group)
 
-        train_df = pd.concat(trains).reset_index(drop=True)
-        val_df = pd.concat(vals).reset_index(drop=True)
+        empty_df = df.iloc[0:0].copy()
+        train_df = pd.concat(trains).reset_index(drop=True) if trains else empty_df.copy()
+        val_df = pd.concat(vals).reset_index(drop=True) if vals else empty_df.copy()
         return train_df, val_df
 
     def _drop_invalid_rows(self, df: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:
@@ -230,7 +231,7 @@ class DataPreprocessor:
             self._update_training_run_metadata(train_df, val_df)
             self._revalidate_training_universe(train_df, val_df)
             valid_numeric_features = [feature for feature in numeric_features if feature in train_df.columns]
-            metadata = self._build_normalizer_metadata(valid_numeric_features)
+            expected_metadata = self._build_normalizer_metadata(valid_numeric_features)
             normalizers_path = Path(self.config_manager.get("paths.normalizers_dir")) / f"{self.model_name}_normalizers.pkl"
             existing_normalizers = {}
             existing_metadata = None
@@ -239,7 +240,12 @@ class DataPreprocessor:
                 existing_normalizers = self.config_manager.load_normalizers(self.model_name)
                 existing_metadata = self.config_manager.get_last_normalizers_metadata()
 
-            reuse_existing = bool(existing_normalizers and existing_metadata and existing_metadata.get("schema_hash") == metadata["schema_hash"])
+            reuse_existing = bool(
+                existing_normalizers
+                and existing_metadata
+                and existing_metadata.get("schema_hash") == expected_metadata["schema_hash"]
+                and existing_metadata.get("config_hash") == expected_metadata["config_hash"]
+            )
             if reuse_existing:
                 logger.info("Se reutilizan los normalizadores compatibles de %s", self.model_name)
                 normalizers = existing_normalizers
@@ -265,6 +271,7 @@ class DataPreprocessor:
                     valid_numeric_features.remove(feature)
                     normalizers.pop(feature, None)
 
+            metadata = self._build_normalizer_metadata(valid_numeric_features)
             self.config_manager.save_normalizers(self.model_name, normalizers, metadata=metadata, overwrite=True)
 
             for cat_col in KNOWN_CATEGORICAL_FEATURES:
