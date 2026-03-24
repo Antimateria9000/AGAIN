@@ -7,6 +7,7 @@ from again_econ.config import (
     WalkforwardConfig,
     load_backtest_config,
 )
+from again_econ.adapters.again_tft_provider import AgainTFTForecastProvider, AgainTFTPredictionAPI
 from again_econ.contracts import (
     ArtifactReference,
     BacktestResult,
@@ -46,12 +47,18 @@ from again_econ.contracts import (
     WindowResult,
 )
 from again_econ.providers import ForecastProvider, SignalProvider
+from again_econ.storage import BacktestStorage
 from again_econ.runner import run_backtest, run_backtest_from_bundle, run_backtest_with_provider
+from again_econ.ui_adapter import BacktestUIAdapter
 
 __all__ = [
     "BacktestConfig",
     "BacktestResult",
     "ArtifactReference",
+    "AgainTFTForecastProvider",
+    "AgainTFTPredictionAPI",
+    "BacktestStorage",
+    "BacktestUIAdapter",
     "BundleProvenance",
     "BundleProvenanceMode",
     "CapitalCompetitionPolicy",

@@ -16,6 +16,13 @@ Pipeline principal:
 
 El bundle JSON sigue existiendo, pero solo como adaptador estable de compatibilidad (`AgainBundleAdapter`).
 
+Integracion adicional disponible en el repositorio AGAIN:
+
+- adaptador `AgainTFTForecastProvider` para replay economico del modelo TFT activo
+- builder explicito de `MarketFrame` desde `DataFetcher.fetch_many_stocks_with_report(...)`
+- almacenamiento persistente de runs economicos (`storage.py`)
+- reporting y vistas estables para Streamlit (`reports.py`, `ui_adapter.py`)
+
 ## Semantica temporal
 
 Cada `WalkforwardWindow` declara explicitamente:
@@ -51,8 +58,20 @@ Opciones:
 
 - `ForecastProvider`: entrega forecasts por ventana
 - `SignalProvider`: entrega signals por ventana
+- `AgainTFTForecastProvider`: provider oficial de integracion AGAIN TFT -> `again_econ`
 - `run_backtest(...)`: adaptador fino para tuplas directas
 - `run_backtest_from_bundle(...)`: adaptador fino para bundles JSON
+
+## Integracion Streamlit
+
+La app principal expone una seccion `Backtesting` sobre esta arquitectura. Se distinguen dos modos:
+
+- `exploratory_live`: rapido e interactivo; puede aceptar fallback explicito a cache local y no debe venderse como validacion economica oficial
+- `official_frozen`: persiste mercado, metrics, manifests y catalogo; es reproducible como replay congelado del modelo activo
+
+Limite metodologico explicitado:
+
+- `official_frozen` no equivale a reentrenar el TFT por ventana ni a un WFO estricto del modelo
 
 ## Policies
 

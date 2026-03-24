@@ -1,0 +1,18 @@
+label: streamlit_backtest_exploratory
+
+mode:
+  label: exploratory_live
+  methodology_label: exploratory_global_model_replay
+  methodology_note: >
+    Modo interactivo pensado para exploracion rapida desde UI. Usa el modelo activo
+    y permite fallback explicito a cache local, por lo que no debe venderse como
+    evidencia economica oficial ni como WFO estricto.
+
+market:
+  allow_local_fallback: true
+
+provider:
+  version: exploratory_v1
+
+manifest:
+  artifact_policy_name: live_snapshot_and_references

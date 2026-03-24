@@ -1,0 +1,55 @@
+label: streamlit_backtest_default
+
+mode:
+  label: exploratory_live
+  methodology_label: global_model_replay
+  methodology_note: >
+    Reproduce decisiones economicas con el modelo TFT activo y datos de mercado diarios.
+    No implica reentrenamiento walk-forward por ventana.
+
+storage:
+  root: data/backtests_econ
+
+market:
+  allow_local_fallback: true
+
+provider_runtime:
+  forecast_mode: recursive_one_step
+
+walkforward:
+  train_size: 180
+  test_size: 60
+  step_size: 60
+  lookahead_bars: 1
+  execution_lag_bars: 1
+  close_policy: administrative_close_on_last_bar
+  calendar_name: daily_default
+
+signal:
+  long_threshold: 0.0
+  translation_policy_name: long_only_threshold
+  translation_policy_version: v1
+
+execution:
+  initial_cash: 10000.0
+  allocation_fraction: 1.0
+  slippage_bps: 0.0
+  commission_rate: 0.0
+  commission_per_order: 0.0
+  allow_fractional_shares: false
+  bars_per_year: 252
+  scheduling_policy: next_available_open
+  scheduling_policy_version: v1
+  capital_competition_policy: score_desc
+  capital_competition_policy_version: v1
+  sizing_policy: allocation_fraction_of_cash
+  sizing_policy_version: v1
+
+provider:
+  name: again_tft
+  version: v1
+
+manifest:
+  artifact_policy_name: snapshot_and_references
+  artifact_policy_version: v1
+  command: streamlit_backtesting

@@ -1,6 +1,6 @@
 # Predictor bursatil con TFT
 
-Este repositorio implementa un pipeline experimental de forecasting bursatil con Temporal Fusion Transformer (TFT), junto con una aplicacion Streamlit para inferencia, comparacion historica y benchmark estadistico.
+Este repositorio implementa un pipeline experimental de forecasting bursatil con Temporal Fusion Transformer (TFT), junto con una aplicacion Streamlit para inferencia, comparacion historica, benchmark estadistico y backtesting economico integrado sobre `again_econ`.
 
 No es un sistema listo para inversion real. El alcance actual es investigacion aplicada, validacion tecnica del pipeline y reproducibilidad del flujo principal.
 
@@ -12,13 +12,15 @@ No es un sistema listo para inversion real. El alcance actual es investigacion a
 - Inferencia desde la app Streamlit
 - Comparacion historica sobre barras reales disponibles
 - Benchmark estadistico con metricas MAPE, MAE, RMSE y DirAcc
+- Backtesting economico desde la UI Streamlit usando `again_econ`
 - Persistencia del historico de benchmark en SQLite
+- Persistencia y catalogo de runs economicos en SQLite + parquet
 - Smoke test reproducible con datos sinteticos
 
 ## Lo que NO hace hoy
 
-- El pipeline TFT principal no implementa un backtest economico integrado
 - No debe interpretarse como un sistema de trading listo para produccion
+- El backtesting economico integrado no equivale a un entrenamiento walk-forward estricto por ventana del modelo TFT
 - No cubre live trading, intradia, short selling general ni ejecucion de mercado real
 
 ## Modulo economico `again_econ`
@@ -29,11 +31,24 @@ El repositorio incluye un modulo economico independiente llamado `again_econ`. S
 - long-only sobre daily bars
 - pipeline principal por provider: `ForecastProvider` o `SignalProvider`
 - adaptador JSON de bundle solo como frontera de compatibilidad, no como centro del diseno
+- adaptador oficial AGAIN TFT -> `again_econ` para ejecucion desde la app
 - semantica temporal explicita por ventana: `train_start`, `train_end`, `test_start`, `test_end`, `lookahead_bars`, `execution_lag_bars` y `close_policy`
 - timestamps operativos explicitados y validados: `observed_at`, `decision_timestamp`, `available_at`, `execution_timestamp`
 - comisiones, slippage, scheduling, ranking y competencia de capital declarados y versionados
 - manifests reproducibles por run y por ventana, con fingerprints y referencias a artefactos
 - ledger, trades y snapshots reproducibles con invariantes contables verificables
+- almacenamiento y reporting de corridas economicas para catalogo y lectura posterior desde Streamlit
+
+Integracion actual en la app:
+
+- seccion `Backtesting` en Streamlit
+- modo `exploratory_live`: rapido, interactivo y util para inspeccion, pero no oficial
+- modo `official_frozen`: persistente y reproducible como replay congelado del modelo activo, con snapshot de mercado y catalogo auditable
+
+Importante:
+
+- `official_frozen` no se presenta como WFO estricto del modelo TFT
+- la app deja esto explicitado en UI, manifests y summary payloads
 
 Garantias metodologicas de esta v1:
 
@@ -166,6 +181,8 @@ Artefactos relevantes:
 ```text
 app/
   app.py
+  backtest_market_builder.py
+  backtest_service.py
   benchmark_store.py
   benchmark_utils.py
   config_loader.py
@@ -186,6 +203,7 @@ again_benchmark/
   ui_adapter.py
   validation.py
 config/
+  backtests/
   benchmark_tickers.yaml
   config.yaml
   tickers_with_names.yaml

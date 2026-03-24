@@ -1,0 +1,19 @@
+label: streamlit_backtest_frozen
+
+mode:
+  label: official_frozen
+  methodology_label: frozen_global_model_replay
+  methodology_note: >
+    Corrida congelada y persistente con snapshot del mercado, config versionada y
+    referencias a artefactos del modelo activo. Es reproducible como replay del
+    modelo congelado, pero no equivale a un entrenamiento walk-forward estricto
+    por ventana.
+
+market:
+  allow_local_fallback: false
+
+provider:
+  version: frozen_v1
+
+manifest:
+  artifact_policy_name: frozen_snapshot_and_references

@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from app.backtest_service import BacktestService
 from app.config_loader import get_default_config_path, load_tickers_and_names, load_training_groups
 from app.plot_utils import build_benchmark_plot, build_stock_plot
 from app.services import BenchmarkService, ForecastService, TrainingService
@@ -36,6 +37,11 @@ def _get_forecast_service(config_path: str | None, years: int) -> ForecastServic
 @st.cache_resource(show_spinner=False)
 def _get_benchmark_service(config_path: str | None, years: int) -> BenchmarkService:
     return BenchmarkService(_get_config_manager(config_path), years)
+
+
+@st.cache_resource(show_spinner=False)
+def _get_backtest_service(config_path: str | None, years: int) -> BacktestService:
+    return BacktestService(_get_config_manager(config_path), years)
 
 
 @st.cache_resource(show_spinner=False)
@@ -166,6 +172,11 @@ def _combine_benchmark_datetime(selected_date, selected_time):
     return datetime.combine(selected_date, selected_time).replace(tzinfo=None)
 
 
+def _parse_manual_tickers(value: str) -> list[str]:
+    tokens = [token.strip().upper() for token in value.replace(";", ",").split(",")]
+    return list(dict.fromkeys(token for token in tokens if token))
+
+
 def _render_benchmark_run_view(run_view: dict):
     manifest = run_view["manifest"]
     summary = run_view["summary"]
@@ -225,6 +236,72 @@ def _render_benchmark_run_view(run_view: dict):
     with st.expander("Manifest y trazabilidad", expanded=False):
         st.json(_serialize_for_ui(manifest))
         st.write("Checksums y artefactos auditables")
+        st.json(_serialize_for_ui(artifact_audit))
+
+
+def _render_backtest_run_view(run_view: dict):
+    manifest = run_view["manifest"]
+    summary = run_view["summary"]
+    oos_curve = run_view["oos_curve"]
+    windows = run_view["windows"]
+    trades = run_view["trades"]
+    fills = run_view["fills"]
+    discards = run_view["discards"]
+    artifact_audit = run_view["artifact_audit"]
+    market_context = summary.get("market_context") or {}
+
+    st.subheader("Resumen de corrida economica")
+    st.write(f"Run ID: `{manifest['run_id']}`")
+    st.write(f"Modo: `{summary['mode']}`")
+    st.write(f"Preset: `{summary['preset_name']}`")
+    st.write(f"Metodologia: `{summary['methodology_label']}`")
+    st.write(f"Modelo: `{summary['model_name']}`")
+    if market_context.get("methodology_note"):
+        st.warning(str(market_context["methodology_note"]))
+
+    summary_row = {
+        "run_id": summary["run_id"],
+        "mode": summary["mode"],
+        "preset_name": summary["preset_name"],
+        "model_name": summary["model_name"],
+        "requested_universe": len(summary["requested_universe"]),
+        "effective_universe": len(summary["effective_universe"]),
+        "window_count": manifest["window_count"],
+        "discarded_signal_count": manifest["discarded_signal_count"],
+        **summary["summary_metrics"],
+    }
+    st.dataframe(pd.DataFrame([summary_row]))
+
+    if not oos_curve.empty:
+        st.subheader("Curva OOS")
+        chart_df = oos_curve.copy()
+        chart_df["timestamp"] = pd.to_datetime(chart_df["timestamp"])
+        st.line_chart(chart_df.set_index("timestamp")[["equity"]])
+
+    if not windows.empty:
+        st.subheader("Resultados por ventana")
+        st.dataframe(windows)
+
+    if not discards.empty:
+        st.subheader("Senales descartadas")
+        st.dataframe(discards)
+
+    if not trades.empty:
+        st.subheader("Trades")
+        st.dataframe(trades)
+
+    with st.expander("Fills y trazabilidad", expanded=False):
+        if not fills.empty:
+            st.write("Fills")
+            st.dataframe(fills)
+        st.write("Contexto de mercado")
+        st.json(_serialize_for_ui(market_context))
+        if summary.get("warnings"):
+            st.write("Warnings de construccion de mercado")
+            st.json(_serialize_for_ui(summary["warnings"]))
+        st.write("Manifest")
+        st.json(_serialize_for_ui(manifest))
+        st.write("Checksums")
         st.json(_serialize_for_ui(artifact_audit))
 
 
@@ -381,6 +458,214 @@ def _render_benchmark_view(benchmark_service: BenchmarkService):
                 st.error(f"No se pudieron comparar las corridas: {exc}")
 
     _render_legacy_benchmark_history(benchmark_service)
+
+
+def _render_backtesting_view(config: dict, backtest_service: BacktestService, years: int):
+    readiness = backtest_service.get_model_readiness()
+    if not readiness.ready:
+        _render_model_not_ready(readiness)
+        return
+
+    preset_catalog = {entry["mode"]: entry for entry in backtest_service.list_presets()}
+    mode_label = st.radio(
+        "Modo de backtesting",
+        options=["exploratory_live", "official_frozen"],
+        format_func=lambda value: "Backtest exploratorio" if value == "exploratory_live" else "Backtest oficial frozen",
+        horizontal=True,
+    )
+    selected_preset = preset_catalog[mode_label]
+    preset_defaults = backtest_service.get_preset_defaults(mode_label)
+    if mode_label == "official_frozen":
+        st.success("Modo frozen reproducible: persiste snapshot de mercado, manifiesto, metricas y catalogo auditable.")
+    else:
+        st.warning("Modo exploratorio: util para analisis interactivo. No equivale a un WFO estricto ni a una validacion economica oficial.")
+    st.caption(selected_preset["methodology_note"])
+
+    ticker_options = load_tickers_and_names(config)
+    sorted_labels = [f"{ticker} - {name}" for ticker, name in sorted(ticker_options.items())]
+    label_to_ticker = {f"{ticker} - {name}": ticker for ticker, name in sorted(ticker_options.items())}
+    default_label = sorted_labels[: min(3, len(sorted_labels))]
+    selected_labels = st.multiselect(
+        "Universo conocido",
+        options=sorted_labels,
+        default=default_label,
+    )
+    manual_tickers = st.text_input(
+        "Tickers adicionales (separados por comas)",
+        value="",
+        help="Puedes combinar la lista conocida con tickers escritos manualmente.",
+    )
+    selected_tickers = list(dict.fromkeys([label_to_ticker[label] for label in selected_labels] + _parse_manual_tickers(manual_tickers)))
+
+    now_value = datetime.now().replace(microsecond=0, second=0)
+    default_start = pd.Timestamp(now_value).tz_localize(None) - pd.Timedelta(days=years * 365)
+    range_cols = st.columns(2)
+    with range_cols[0]:
+        start_date = st.date_input("Fecha inicio", value=default_start.date(), key="econ_backtest_start_date")
+    with range_cols[1]:
+        end_date = st.date_input("Fecha fin", value=now_value.date(), key="econ_backtest_end_date")
+
+    walkforward = preset_defaults["walkforward"]
+    execution = preset_defaults["execution"]
+    signal = preset_defaults["signal"]
+    walk_cols = st.columns(5)
+    with walk_cols[0]:
+        train_size = st.number_input("Train bars", min_value=30, value=int(walkforward["train_size"]), step=10)
+    with walk_cols[1]:
+        test_size = st.number_input("Test bars", min_value=5, value=int(walkforward["test_size"]), step=5)
+    with walk_cols[2]:
+        step_size = st.number_input("Step bars", min_value=1, value=int(walkforward["step_size"]), step=1)
+    with walk_cols[3]:
+        lookahead_bars = st.number_input("Lookahead", min_value=1, value=int(walkforward["lookahead_bars"]), step=1)
+    with walk_cols[4]:
+        execution_lag_bars = st.number_input(
+            "Execution lag",
+            min_value=1,
+            value=int(walkforward["execution_lag_bars"]),
+            step=1,
+        )
+
+    exec_cols = st.columns(5)
+    with exec_cols[0]:
+        initial_cash = st.number_input("Capital inicial", min_value=1000.0, value=float(execution["initial_cash"]), step=1000.0)
+    with exec_cols[1]:
+        allocation_fraction = st.number_input(
+            "Fraccion por orden",
+            min_value=0.01,
+            max_value=1.0,
+            value=float(execution["allocation_fraction"]),
+            step=0.05,
+        )
+    with exec_cols[2]:
+        slippage_bps = st.number_input("Slippage (bps)", min_value=0.0, value=float(execution["slippage_bps"]), step=1.0)
+    with exec_cols[3]:
+        commission_rate = st.number_input("Comision rate", min_value=0.0, value=float(execution["commission_rate"]), step=0.0001, format="%.4f")
+    with exec_cols[4]:
+        commission_per_order = st.number_input(
+            "Comision fija",
+            min_value=0.0,
+            value=float(execution["commission_per_order"]),
+            step=0.1,
+        )
+
+    policy_cols = st.columns(3)
+    with policy_cols[0]:
+        capital_competition_policy = st.selectbox(
+            "Capital competition",
+            options=["score_desc", "instrument_asc"],
+            index=["score_desc", "instrument_asc"].index(str(execution["capital_competition_policy"])),
+        )
+    with policy_cols[1]:
+        long_threshold = st.number_input("Long threshold", value=float(signal["long_threshold"]), step=0.001, format="%.3f")
+    with policy_cols[2]:
+        allow_fractional_shares = st.checkbox(
+            "Permitir fraccionales",
+            value=bool(execution["allow_fractional_shares"]),
+        )
+
+    if st.button("Ejecutar backtesting economico", type="primary"):
+        if not selected_tickers:
+            st.error("Selecciona al menos un ticker para ejecutar el backtesting.")
+        elif start_date >= end_date:
+            st.error("La fecha de inicio debe ser anterior a la fecha de fin.")
+        else:
+            with st.spinner("Ejecutando backtesting economico..."):
+                try:
+                    start_timestamp = _combine_benchmark_datetime(start_date, datetime.min.time())
+                    end_timestamp = _combine_benchmark_datetime(end_date, datetime.min.time()) + pd.Timedelta(days=1)
+                    run_view = backtest_service.run_backtest(
+                        mode=mode_label,
+                        tickers=selected_tickers,
+                        start_date=start_timestamp,
+                        end_date=end_timestamp,
+                        walkforward_overrides={
+                            "train_size": int(train_size),
+                            "test_size": int(test_size),
+                            "step_size": int(step_size),
+                            "lookahead_bars": int(lookahead_bars),
+                            "execution_lag_bars": int(execution_lag_bars),
+                        },
+                        execution_overrides={
+                            "initial_cash": float(initial_cash),
+                            "allocation_fraction": float(allocation_fraction),
+                            "slippage_bps": float(slippage_bps),
+                            "commission_rate": float(commission_rate),
+                            "commission_per_order": float(commission_per_order),
+                            "allow_fractional_shares": bool(allow_fractional_shares),
+                        },
+                        signal_overrides={
+                            "long_threshold": float(long_threshold),
+                        },
+                        policy_overrides={
+                            "capital_competition_policy": capital_competition_policy,
+                        },
+                    )
+                    st.session_state.last_backtest_run_id = run_view["manifest"]["run_id"]
+                    st.success(f"Backtesting completado: {run_view['manifest']['run_id']}")
+                    _render_backtest_run_view(run_view)
+                except Exception as exc:
+                    logger.exception("Error al ejecutar backtesting economico")
+                    st.error(f"Error al ejecutar backtesting economico: {exc}")
+
+    st.subheader("Catalogo de runs economicos")
+    filter_cols = st.columns(4)
+    with filter_cols[0]:
+        filter_mode = st.selectbox("Filtro modo", options=["Todos", "exploratory_live", "official_frozen"], index=0)
+    with filter_cols[1]:
+        filter_preset = st.selectbox("Filtro preset", options=["Todos", "exploratory", "strict_frozen"], index=0)
+    with filter_cols[2]:
+        filter_model = st.text_input("Filtro modelo", value="", key="econ_filter_model")
+    with filter_cols[3]:
+        filter_run_id = st.text_input("Filtro run_id", value="", key="econ_filter_run_id")
+
+    runs = backtest_service.list_runs(
+        mode=None if filter_mode == "Todos" else filter_mode,
+        preset_name=None if filter_preset == "Todos" else filter_preset,
+        model_name=filter_model or None,
+        run_id=filter_run_id or None,
+    )
+    runs_df = pd.DataFrame(runs)
+    st.dataframe(runs_df)
+
+    available_run_ids = runs_df["run_id"].tolist() if not runs_df.empty else []
+    if available_run_ids:
+        default_run_id = st.session_state.get("last_backtest_run_id", available_run_ids[0])
+        if default_run_id not in available_run_ids:
+            default_run_id = available_run_ids[0]
+        selected_run_id = st.selectbox(
+            "Run economico para inspeccion",
+            options=available_run_ids,
+            index=available_run_ids.index(default_run_id),
+        )
+        if st.button("Cargar run economico seleccionado"):
+            try:
+                _render_backtest_run_view(backtest_service.load_run_view(selected_run_id))
+            except Exception as exc:
+                logger.exception("Error al cargar corrida economica")
+                st.error(f"No se pudo cargar la corrida economica: {exc}")
+
+        st.subheader("Comparacion entre corridas economicas")
+        comparison_cols = st.columns(2)
+        with comparison_cols[0]:
+            left_run_id = st.selectbox("Run A economico", options=available_run_ids, key="econ_comparison_left")
+        with comparison_cols[1]:
+            right_run_id = st.selectbox(
+                "Run B economico",
+                options=available_run_ids,
+                index=min(1, len(available_run_ids) - 1),
+                key="econ_comparison_right",
+            )
+        if left_run_id and right_run_id and left_run_id != right_run_id:
+            try:
+                comparison = backtest_service.compare_runs(left_run_id, right_run_id)
+                st.write("Delta de metricas globales")
+                st.dataframe(pd.DataFrame([comparison["summary_delta"]]))
+                if comparison["window_deltas"]:
+                    st.write("Delta por ventana")
+                    st.dataframe(pd.DataFrame(comparison["window_deltas"]))
+            except Exception as exc:
+                logger.exception("Error al comparar corridas economicas")
+                st.error(f"No se pudieron comparar las corridas economicas: {exc}")
 
 
 def _resolve_profile_options(base_config: dict, training_service: TrainingService) -> tuple[list[dict[str, str]], str]:
@@ -614,7 +899,10 @@ def main():
     else:
         st.sidebar.error("Modelo no preparado")
 
-    page = st.sidebar.selectbox("Seccion", ["Entrenamiento", "Prediccion futura", "Comparacion historica", "Benchmark"])
+    page = st.sidebar.selectbox(
+        "Seccion",
+        ["Entrenamiento", "Prediccion futura", "Comparacion historica", "Benchmark", "Backtesting"],
+    )
 
     if page == "Entrenamiento":
         _render_training_view(base_config, training_service)
@@ -622,7 +910,7 @@ def main():
         _render_prediction_view(config, forecast_service, years)
     elif page == "Comparacion historica":
         _render_historical_view(config, forecast_service, years)
-    else:
+    elif page == "Benchmark":
         try:
             benchmark_service = _get_benchmark_service(st.session_state.selected_config_path, years)
         except Exception as exc:
@@ -631,6 +919,15 @@ def main():
             st.info("La prediccion TFT y el resto de la app siguen disponibles porque el benchmark esta desacoplado.")
             return
         _render_benchmark_view(benchmark_service)
+    else:
+        try:
+            backtest_service = _get_backtest_service(st.session_state.selected_config_path, years)
+        except Exception as exc:
+            logger.exception("No se pudo inicializar el modulo de backtesting economico")
+            st.error(f"El modulo de backtesting economico no pudo inicializarse: {exc}")
+            st.info("El resto de la app sigue disponible porque la integracion economica esta desacoplada.")
+            return
+        _render_backtesting_view(config, backtest_service, years)
 
 
 if __name__ == "__main__":
