@@ -1,67 +1,81 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from datetime import datetime
-from enum import Enum
 import hashlib
-import json
-from typing import Any
+import sys
 
 from again_econ.config import BacktestConfig
-from again_econ.contracts import InputBundle, MarketFrame, RunManifest, WalkforwardWindow
-
-
-def _normalize_for_hash(value: Any) -> Any:
-    if is_dataclass(value):
-        return _normalize_for_hash(asdict(value))
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {key: _normalize_for_hash(value[key]) for key in sorted(value)}
-    if isinstance(value, (list, tuple)):
-        return [_normalize_for_hash(item) for item in value]
-    return value
-
-
-def _fingerprint_payload(value: Any) -> str:
-    payload = json.dumps(_normalize_for_hash(value), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+from again_econ.contracts import PolicyIdentity, ProviderIdentity, RunManifest, WindowManifest
+from again_econ.fingerprints import fingerprint_payload
+from again_econ.signals import resolve_signal_policy_identity
 
 
 def build_run_manifest(
+    *,
     config: BacktestConfig,
-    market_frame: MarketFrame,
-    windows: tuple[WalkforwardWindow, ...],
-    bundle: InputBundle,
+    market_frame,
+    windows,
+    provider: ProviderIdentity,
+    window_manifests: tuple[WindowManifest, ...],
+    input_fingerprint: str,
+    adapter_name: str | None = None,
+    bundle_version: int | None = None,
+    provenance_mode=None,
+    input_reference: str | None = None,
+    artifact_references=(),
 ) -> RunManifest:
-    config_fingerprint = _fingerprint_payload(config)
-    market_fingerprint = _fingerprint_payload(market_frame)
-    input_fingerprint = _fingerprint_payload(
-        {
-            "adapter_name": bundle.adapter_name,
-            "bundle_version": bundle.bundle_version,
-            "provenance_mode": bundle.provenance_mode,
-            "forecasts": bundle.forecasts,
-            "signals": bundle.signals,
-            "provenance": bundle.provenance,
-        }
-    )
+    config_fingerprint = fingerprint_payload(config)
+    market_fingerprint = fingerprint_payload(market_frame)
+    window_plan_fingerprint = fingerprint_payload(windows)
+    discarded_reason_counts: dict[str, int] = {}
+    discarded_signal_count = 0
+    for window_manifest in window_manifests:
+        discarded_signal_count += window_manifest.discarded_signal_count
+        for reason, count in window_manifest.discarded_reason_counts.items():
+            discarded_reason_counts[reason] = discarded_reason_counts.get(reason, 0) + count
     run_id = hashlib.sha256(
-        f"{config_fingerprint}:{market_fingerprint}:{input_fingerprint}:{bundle.adapter_name}:{bundle.bundle_version}".encode(
-            "utf-8"
-        )
+        (
+            f"{config_fingerprint}:{market_fingerprint}:{window_plan_fingerprint}:{input_fingerprint}:"
+            f"{provider.name}:{provider.version}:{config.execution.capital_competition_policy.value}:"
+            f"{config.execution.capital_competition_policy_version}:{config.signal.translation_policy_name}:"
+            f"{config.signal.translation_policy_version}"
+        ).encode("utf-8")
     ).hexdigest()[:16]
     return RunManifest(
         run_id=run_id,
         label=config.label,
-        adapter_name=bundle.adapter_name,
-        bundle_version=bundle.bundle_version,
-        provenance_mode=bundle.provenance_mode,
+        provider=provider,
+        signal_policy=resolve_signal_policy_identity(config.signal),
+        scheduling_policy=PolicyIdentity(
+            name=config.execution.scheduling_policy.value,
+            version=config.execution.scheduling_policy_version,
+        ),
+        sizing_policy=PolicyIdentity(
+            name=config.execution.sizing_policy.value,
+            version=config.execution.sizing_policy_version,
+        ),
+        capital_competition_policy=PolicyIdentity(
+            name=config.execution.capital_competition_policy.value,
+            version=config.execution.capital_competition_policy_version,
+        ),
+        artifact_policy=PolicyIdentity(
+            name=config.manifest.artifact_policy_name,
+            version=config.manifest.artifact_policy_version,
+        ),
         config_fingerprint=config_fingerprint,
         market_fingerprint=market_fingerprint,
+        window_plan_fingerprint=window_plan_fingerprint,
         input_fingerprint=input_fingerprint,
         window_count=len(windows),
-        input_reference=bundle.source_path,
+        adapter_name=adapter_name,
+        bundle_version=bundle_version,
+        provenance_mode=provenance_mode,
+        input_reference=input_reference,
+        seed=config.manifest.seed,
+        command=config.manifest.command,
+        python_version=sys.version.split()[0],
+        code_commit_sha=config.manifest.code_commit_sha,
+        discarded_signal_count=discarded_signal_count,
+        discarded_reason_counts=discarded_reason_counts,
+        artifact_references=tuple(artifact_references),
+        windows=tuple(window_manifests),
     )

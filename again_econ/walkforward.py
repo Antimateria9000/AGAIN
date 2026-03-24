@@ -6,7 +6,7 @@ from again_econ.errors import BacktestConfigurationError
 from again_econ.validation import validate_walkforward_windows
 
 
-def build_walkforward_windows(market_frame: MarketFrame, config: WalkforwardConfig) -> tuple[WalkforwardWindow, ...]:
+def materialize_walkforward_windows(market_frame: MarketFrame, config: WalkforwardConfig) -> tuple[WalkforwardWindow, ...]:
     timestamps = market_frame.timestamps()
     minimum_points = config.train_size + config.test_size
     if len(timestamps) < minimum_points:
@@ -27,10 +27,17 @@ def build_walkforward_windows(market_frame: MarketFrame, config: WalkforwardConf
                 train_end=train_end,
                 test_start=test_start,
                 test_end=test_end,
+                lookahead_bars=config.lookahead_bars,
+                execution_lag_bars=config.execution_lag_bars,
+                close_policy=config.close_policy,
             )
         )
     validate_walkforward_windows(windows)
     return tuple(windows)
+
+
+def build_walkforward_windows(market_frame: MarketFrame, config: WalkforwardConfig) -> tuple[WalkforwardWindow, ...]:
+    return materialize_walkforward_windows(market_frame, config)
 
 
 def slice_test_market(market_frame: MarketFrame, window: WalkforwardWindow) -> MarketFrame:

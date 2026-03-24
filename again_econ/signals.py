@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from again_econ.config import SignalConfig
-from again_econ.contracts import ForecastRecord, PositionTarget, SignalRecord, TargetKind
+from again_econ.contracts import ForecastRecord, PolicyIdentity, PositionTarget, SignalRecord, TargetKind
 from again_econ.errors import ContractValidationError
 
 
@@ -41,6 +41,14 @@ def translate_forecasts_to_signals(
                 score=score,
                 provenance=record.provenance,
                 metadata={"target_kind": record.target_kind.value, **record.metadata},
+                observed_at=record.observed_at,
             )
         )
     return tuple(signals)
+
+
+def resolve_signal_policy_identity(config: SignalConfig) -> PolicyIdentity:
+    return PolicyIdentity(
+        name=config.translation_policy_name,
+        version=config.translation_policy_version,
+    )

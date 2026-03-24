@@ -5,11 +5,15 @@ import json
 from pathlib import Path
 
 from again_econ.contracts import (
+    ArtifactReference,
     BundleProvenance,
     BundleProvenanceMode,
     ForecastRecord,
     InputBundle,
+    InputSourceKind,
     PositionTarget,
+    ProviderDataKind,
+    ProviderIdentity,
     SignalRecord,
     TargetKind,
     WindowProvenance,
@@ -29,6 +33,12 @@ class AgainBundleAdapter:
         payload_type = str(payload.get("payload_type", "")).strip()
         records = payload.get("records") or []
         provenance = self._parse_bundle_provenance(payload.get("provenance")) if version == 2 else None
+        artifact_references = (
+            ArtifactReference(
+                artifact_type="input_bundle",
+                locator=str(path),
+            ),
+        )
 
         if payload_type == "forecast_records":
             forecasts = tuple(self._parse_forecast_record(record, bundle_provenance=provenance) for record in records)
@@ -39,6 +49,14 @@ class AgainBundleAdapter:
                 forecasts=forecasts,
                 provenance=provenance,
                 source_path=str(path),
+                source_kind=InputSourceKind.ADAPTED_BUNDLE,
+                provider_identity=ProviderIdentity(
+                    name=self.adapter_name,
+                    version=f"bundle_v{version}",
+                    source_kind=InputSourceKind.ADAPTED_BUNDLE,
+                    data_kind=ProviderDataKind.FORECAST,
+                ),
+                artifact_references=artifact_references,
             )
         if payload_type == "signal_records":
             signals = tuple(self._parse_signal_record(record, bundle_provenance=provenance) for record in records)
@@ -49,6 +67,14 @@ class AgainBundleAdapter:
                 signals=signals,
                 provenance=provenance,
                 source_path=str(path),
+                source_kind=InputSourceKind.ADAPTED_BUNDLE,
+                provider_identity=ProviderIdentity(
+                    name=self.adapter_name,
+                    version=f"bundle_v{version}",
+                    source_kind=InputSourceKind.ADAPTED_BUNDLE,
+                    data_kind=ProviderDataKind.SIGNAL,
+                ),
+                artifact_references=artifact_references,
             )
         raise AdapterError(f"payload_type no soportado: {payload_type}")
 
@@ -67,9 +93,12 @@ class AgainBundleAdapter:
         try:
             return WindowProvenance(
                 window_index=int(payload["window_index"]),
+                train_start=datetime.fromisoformat(payload["train_start"]) if payload.get("train_start") is not None else None,
                 train_end=datetime.fromisoformat(payload["train_end"]),
                 test_start=datetime.fromisoformat(payload["test_start"]),
                 test_end=datetime.fromisoformat(payload["test_end"]),
+                lookahead_bars=int(payload.get("lookahead_bars", 1)),
+                execution_lag_bars=int(payload.get("execution_lag_bars", 1)),
             )
         except Exception as exc:  # noqa: BLE001
             raise AdapterError(f"Metadata de ventana invalida: {exc}") from exc
@@ -121,6 +150,7 @@ class AgainBundleAdapter:
                 score=float(payload["score"]) if payload.get("score") is not None else None,
                 provenance=cls._resolve_record_provenance(payload, bundle_provenance=bundle_provenance),
                 metadata=dict(payload.get("metadata") or {}),
+                observed_at=datetime.fromisoformat(payload["observed_at"]) if payload.get("observed_at") is not None else None,
             )
         except Exception as exc:  # noqa: BLE001 - the adapter must annotate malformed bundles
             raise AdapterError(f"Forecast bundle invalido: {exc}") from exc
@@ -141,6 +171,7 @@ class AgainBundleAdapter:
                 score=float(payload["score"]) if payload.get("score") is not None else None,
                 provenance=cls._resolve_record_provenance(payload, bundle_provenance=bundle_provenance),
                 metadata=dict(payload.get("metadata") or {}),
+                observed_at=datetime.fromisoformat(payload["observed_at"]) if payload.get("observed_at") is not None else None,
             )
         except Exception as exc:  # noqa: BLE001 - the adapter must annotate malformed bundles
             raise AdapterError(f"Signal bundle invalido: {exc}") from exc

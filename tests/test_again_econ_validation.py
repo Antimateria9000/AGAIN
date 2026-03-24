@@ -10,6 +10,10 @@ from again_econ.contracts import (
     MarketBar,
     MarketFrame,
     PositionTarget,
+    ProviderDataKind,
+    ProviderIdentity,
+    ProviderWindowPayload,
+    InputSourceKind,
     SignalRecord,
     TargetKind,
     WalkforwardWindow,
@@ -20,6 +24,7 @@ from again_econ.validation import (
     validate_forecasts,
     validate_input_bundle,
     validate_market_frame,
+    validate_provider_window_payload,
     validate_record_matches_window,
     validate_signals,
 )
@@ -39,13 +44,14 @@ def test_validate_market_frame_rejects_duplicate_or_non_increasing_timestamps():
         validate_market_frame(market)
 
 
-def test_validate_forecasts_rejects_future_available_at():
+def test_validate_forecasts_rejects_available_at_before_observed_at():
     record = ForecastRecord(
         instrument_id="AAA",
-        decision_timestamp=datetime(2024, 1, 1),
-        available_at=datetime(2024, 1, 2),
+        decision_timestamp=datetime(2024, 1, 2),
+        available_at=datetime(2024, 1, 1),
         target_kind=TargetKind.RETURN,
         value=0.01,
+        observed_at=datetime(2024, 1, 2),
     )
 
     with pytest.raises(TemporalIntegrityError):
@@ -135,3 +141,27 @@ def test_validate_signals_rejects_duplicate_records():
 
     with pytest.raises(ContractValidationError):
         validate_signals(signals)
+
+
+def test_validate_provider_window_payload_rejects_window_mismatch():
+    window = WalkforwardWindow(
+        index=0,
+        train_start=datetime(2024, 1, 1),
+        train_end=datetime(2024, 1, 2),
+        test_start=datetime(2024, 1, 3),
+        test_end=datetime(2024, 1, 5),
+    )
+    payload = ProviderWindowPayload(
+        window_index=1,
+        provider=ProviderIdentity(
+            name="mock",
+            version="v1",
+            source_kind=InputSourceKind.WINDOW_PROVIDER_SIGNALS,
+            data_kind=ProviderDataKind.SIGNAL,
+        ),
+        payload_kind=ProviderDataKind.SIGNAL,
+        signals=(),
+    )
+
+    with pytest.raises(TemporalIntegrityError):
+        validate_provider_window_payload(payload, window)

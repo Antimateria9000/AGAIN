@@ -23,20 +23,25 @@ No es un sistema listo para inversion real. El alcance actual es investigacion a
 
 ## Modulo economico `again_econ`
 
-El repositorio incluye un modulo economico independiente llamado `again_econ`. Su alcance actual es una v1 sobria y desacoplada para evaluacion economica out-of-sample:
+El repositorio incluye un modulo economico independiente llamado `again_econ`. Su alcance actual es una v1 seria, reproducible y desacoplada para evaluacion economica out-of-sample:
 
 - walk-forward con ventanas de test economicamente independientes
 - long-only sobre daily bars
-- senal calculada al cierre y ejecucion en la apertura siguiente
-- comisiones y slippage simples y deterministas
-- ledger, trades y snapshots reproducibles
-- frontera estable mediante bundles JSON de forecasts o signals
+- pipeline principal por provider: `ForecastProvider` o `SignalProvider`
+- adaptador JSON de bundle solo como frontera de compatibilidad, no como centro del diseno
+- semantica temporal explicita por ventana: `train_start`, `train_end`, `test_start`, `test_end`, `lookahead_bars`, `execution_lag_bars` y `close_policy`
+- timestamps operativos explicitados y validados: `observed_at`, `decision_timestamp`, `available_at`, `execution_timestamp`
+- comisiones, slippage, scheduling, ranking y competencia de capital declarados y versionados
+- manifests reproducibles por run y por ventana, con fingerprints y referencias a artefactos
+- ledger, trades y snapshots reproducibles con invariantes contables verificables
 
 Garantias metodologicas de esta v1:
 
 - no hay carry-over de posiciones entre ventanas
-- las senales cuya `next open` cae fuera de la ventana se descartan de forma explicita
+- `available_at` participa en el scheduling: una senal no puede ejecutarse antes de su disponibilidad real
+- las senales cuya ejecucion cae fuera de la ventana se descartan de forma explicita y auditable
 - las posiciones abiertas al final de la ventana se clausuran administrativamente en la ultima barra OOS
+- la politica de competencia de capital ya no es implicita: queda declarada en config y persistida en manifests
 - el resumen global OOS se calcula desde una curva chain-linked, no desde medias ingenuas de metricas por ventana
 
 Limitaciones explicitas de `again_econ`:
@@ -44,6 +49,10 @@ Limitaciones explicitas de `again_econ`:
 - no sustituye al benchmark estadistico principal del pipeline TFT
 - no soporta todavia intradia, margin, borrow, derivados ni politicas avanzadas de portfolio
 - no es una mini-fork de PyBroker ni depende de internals fragiles del pipeline principal
+
+Documentacion tecnica breve del modulo:
+
+- `again_econ/README.md`
 
 ## Modulo de benchmark `again_benchmark`
 

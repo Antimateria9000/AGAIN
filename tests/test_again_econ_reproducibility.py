@@ -47,3 +47,7 @@ def test_backtest_manifest_and_outputs_are_reproducible(tmp_path):
     assert first.summary_metrics == second.summary_metrics
     assert first.oos_curve == second.oos_curve
     assert first.windows[0].trades == second.windows[0].trades
+    assert first.manifest.windows == second.manifest.windows
+    assert first.manifest.provider.name == "again_json_bundle"
+    assert first.manifest.windows[0].artifact_references[0].locator == str(bundle_path)
+    assert first.windows[0].manifest == first.manifest.windows[0]
