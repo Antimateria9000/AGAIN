@@ -1,0 +1,57 @@
+{
+  "benchmark_id": "again_official_benchmark",
+  "benchmark_version": 1,
+  "completed_tickers": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "NSRGY",
+    "SQM"
+  ],
+  "discarded_tickers": [
+    {
+      "detail": "Historial insuficiente para horizonte 60",
+      "reason": "insufficient_history",
+      "ticker": "TATAMOTORS.NS"
+    }
+  ],
+  "effective_universe": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "NSRGY",
+    "SQM"
+  ],
+  "failed_tickers": [
+    "TATAMOTORS.NS"
+  ],
+  "metrics": {
+    "DirAcc": 47.96296296296296,
+    "MAE": 14.599931082274656,
+    "MAPE": 6.84004038301237,
+    "RMSE": 31.113101472377508
+  },
+  "mode": "frozen",
+  "requested_tickers": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "TATAMOTORS.NS",
+    "NSRGY",
+    "SQM"
+  ],
+  "run_id": "8e8129ba042a026f",
+  "validation_state": "frozen_validated"
+}

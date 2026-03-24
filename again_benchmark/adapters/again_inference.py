@@ -14,7 +14,6 @@ from again_benchmark.contracts import BenchmarkDefinition, BenchmarkTickerResult
 from again_benchmark.errors import BenchmarkAdapterError
 from again_benchmark.metrics import compute_metric_values
 from scripts.data_fetcher import DataFetcher
-from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.prediction_utils import price_path_to_step_returns
@@ -57,6 +56,12 @@ class AgainInferenceAdapter:
         self._sessions_by_ticker: dict[str, tuple[object, dict, object]] = {}
         self._runtime = None
 
+    @staticmethod
+    def _load_prediction_api():
+        from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
+
+        return load_data_and_model, preprocess_data, generate_predictions
+
     def reset(self) -> None:
         for _, _, model in self._sessions_by_ticker.values():
             del model
@@ -78,6 +83,7 @@ class AgainInferenceAdapter:
 
     def _ensure_session(self, ticker: str, observed_data: pd.DataFrame) -> tuple[object, dict, object]:
         if ticker not in self._sessions_by_ticker:
+            load_data_and_model, _, _ = self._load_prediction_api()
             _, dataset, normalizers, model = load_data_and_model(
                 self.config,
                 ticker,
@@ -95,6 +101,7 @@ class AgainInferenceAdapter:
         ticker: str,
         split_date: datetime,
     ) -> BenchmarkTickerResult:
+        _, preprocess_data, generate_predictions = self._load_prediction_api()
         full_data = market_data[market_data["Ticker"] == ticker].copy()
         if full_data.empty:
             raise BenchmarkAdapterError(f"El snapshot no contiene datos para {ticker}")

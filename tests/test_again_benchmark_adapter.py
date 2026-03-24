@@ -24,7 +24,11 @@ def test_again_inference_adapter_keeps_sessions_isolated_per_ticker(monkeypatch)
         calls.append(ticker)
         return None, f"dataset-{ticker}", f"normalizers-{ticker}", f"model-{ticker}"
 
-    monkeypatch.setattr("again_benchmark.adapters.again_inference.load_data_and_model", fake_load_data_and_model)
+    monkeypatch.setattr(
+        AgainInferenceAdapter,
+        "_load_prediction_api",
+        staticmethod(lambda: (fake_load_data_and_model, None, None)),
+    )
     adapter = AgainInferenceAdapter(_DummyConfigManager())
     observed = pd.DataFrame({"Date": pd.to_datetime(["2024-01-01"]), "Close": [100.0]})
 

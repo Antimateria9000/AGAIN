@@ -1,0 +1,67 @@
+{
+  "adapter_name": "again_inference",
+  "as_of_timestamp": "2026-03-24T01:29:00",
+  "backend": "GPU",
+  "benchmark_id": "again_official_benchmark",
+  "benchmark_version": 1,
+  "code_commit_sha": null,
+  "config_fingerprint": "50ec49eb39389df28a7679254f230d47793306047e0d194d40ac7af376583cbd",
+  "created_at": "2026-03-24T01:29:00",
+  "dataset_sha256": "6cab65b740125f2f6f5226e29a49fe69846155ab9e6b89cf8d72dad69b4bd9f1",
+  "definition_id": "9c36e00cc4eb6978",
+  "device": "NVIDIA GeForce RTX 4070 Ti",
+  "discarded_tickers": [
+    {
+      "detail": "Historial insuficiente para horizonte 60",
+      "reason": "insufficient_history",
+      "ticker": "TATAMOTORS.NS"
+    }
+  ],
+  "effective_universe": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "NSRGY",
+    "SQM"
+  ],
+  "horizon": 60,
+  "metrics": [
+    "MAPE",
+    "MAE",
+    "RMSE",
+    "DirAcc"
+  ],
+  "metrics_sha256": "8204e2e0a718104cdc52300b22557dbbd1fe8332f7e45fd8488957172aeca2e7",
+  "mode": "frozen",
+  "model_name": "Gen6_1__group__bbva_peer_banks",
+  "model_sha256": "1dae3a66258e0ed244356ce072d531c28c082ed5647df3583065f5fa3e6207a3",
+  "normalizers_sha256": "2516c1ca0bfe1f7fb1892425486bcf75c940d28c4653d3c17128efff57f690aa",
+  "plot_payload_sha256": "0e1a1b986c3b686d25b4a95e5528fa17245f7dbef6ae0b9e8a08c77f539fa708",
+  "profile_path": "E:\\Analizador_bursatil_3.0\\ACTION(AGAIN-CODEX)\\AGAIN\\config\\runtime_profiles\\Gen6_1__group__bbva_peer_banks.yaml",
+  "python_version": "3.11.9",
+  "run_id": "8e8129ba042a026f",
+  "snapshot_id": "52366e70157c819d",
+  "snapshot_sha256": "d714211ffec131b7560ba758b6aa1ec9a92c3c1760fb8d511efcc16b461e517c",
+  "split_date": "2025-12-18T00:00:00",
+  "split_policy": "common_history_cutoff",
+  "summary_sha256": "2f26cb0d529d9f1c8957974c8279ced096b3504d1ed2cccf7ae90f26f399901b",
+  "ticker_results_sha256": "c308d02a4165d0f00f8251b728dca34e690f4907d32b08352a67d69f78223ccc",
+  "tickers": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "TATAMOTORS.NS",
+    "NSRGY",
+    "SQM"
+  ],
+  "torch_version": "2.7.0+cu128",
+  "validation_state": "frozen_validated"
+}

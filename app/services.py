@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import torch
 
-from again_benchmark import BenchmarkModuleConfig, BenchmarkRunner, BenchmarkStorage, BenchmarkUIAdapter
-from again_benchmark.adapters import AgainInferenceAdapter, load_legacy_benchmark_rows
 from scripts.data_fetcher import DataFetcher
-from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.model_registry import list_model_profiles
 from scripts.utils.model_readiness import assess_model_readiness
 from scripts.utils.training_universe import resolve_training_universe
-from start_training import start_training
 
 
 class ForecastService:
@@ -41,8 +38,15 @@ class ForecastService:
     def fetch_stock_data(self, ticker, start_date, end_date):
         return self.fetcher.fetch_stock_data(ticker, start_date, end_date)
 
+    @staticmethod
+    def _load_prediction_api():
+        from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
+
+        return load_data_and_model, preprocess_data, generate_predictions
+
     def predict(self, ticker, start_date, end_date):
         self._ensure_model_ready()
+        load_data_and_model, preprocess_data, generate_predictions = self._load_prediction_api()
         new_data = self.fetch_stock_data(ticker, start_date, end_date)
         if new_data.empty:
             raise ValueError(f"No hay datos para {ticker}")
@@ -62,6 +66,7 @@ class ForecastService:
 
     def predict_historical(self, ticker, start_date, end_date):
         self._ensure_model_ready()
+        load_data_and_model, preprocess_data, generate_predictions = self._load_prediction_api()
         full_data = self.fetch_stock_data(ticker, start_date, end_date)
         if full_data.empty:
             raise ValueError(f"No hay datos para {ticker}")
@@ -95,11 +100,16 @@ class BenchmarkService:
         self.config_manager = config_manager
         self.config = config_manager.config
         self.years = years
+        try:
+            from again_benchmark import BenchmarkModuleConfig, BenchmarkRunner, BenchmarkStorage, BenchmarkUIAdapter
+            from again_benchmark.adapters.again_inference import AgainInferenceAdapter
+        except Exception as exc:
+            raise RuntimeError(f"No se pudo inicializar again_benchmark: {exc}") from exc
         module_config = BenchmarkModuleConfig.from_again_config(self.config)
         storage = BenchmarkStorage(module_config.storage_root)
         adapter = AgainInferenceAdapter(config_manager)
         runner = BenchmarkRunner(storage, adapter)
-        self.ui = BenchmarkUIAdapter(storage, runner)
+        self.ui: Any = BenchmarkUIAdapter(storage, runner)
 
     def get_model_readiness(self):
         return assess_model_readiness(self.config)
@@ -156,6 +166,8 @@ class BenchmarkService:
         return self.ui.compare_runs(left_run_id, right_run_id)
 
     def load_legacy_history(self):
+        from again_benchmark.adapters.legacy_benchmark_bridge import load_legacy_benchmark_rows
+
         return load_legacy_benchmark_rows(self.config)
 
 
@@ -192,6 +204,8 @@ class TrainingService:
         single_ticker_symbol: str | None = None,
         predefined_group_name: str | None = None,
     ):
+        from start_training import start_training
+
         base_config_path = self.base_config.get("_meta", {}).get("config_path")
         return start_training(
             config_path=base_config_path,

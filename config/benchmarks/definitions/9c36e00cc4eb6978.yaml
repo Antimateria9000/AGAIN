@@ -1,0 +1,25 @@
+benchmark_id: again_official_benchmark
+benchmark_version: 1
+definition_id: 9c36e00cc4eb6978
+historical_display_days: 365
+horizon: 60
+label: Benchmark oficial reproducible AGAIN
+lookback_years: 5
+metrics:
+- MAPE
+- MAE
+- RMSE
+- DirAcc
+notes: Definicion generada desde config/config.yaml y benchmark_tickers.yaml
+split_policy: common_history_cutoff
+tickers:
+- FOR.WA
+- MRC.WA
+- OR.PA
+- CS.PA
+- BA
+- CAT
+- FMX
+- TATAMOTORS.NS
+- NSRGY
+- SQM

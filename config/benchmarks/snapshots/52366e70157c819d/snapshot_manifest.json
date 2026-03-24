@@ -1,0 +1,56 @@
+{
+  "as_of_timestamp": "2026-03-24T01:29:00",
+  "benchmark_id": "again_official_benchmark",
+  "benchmark_version": 1,
+  "created_at": "2026-03-24T01:29:00",
+  "data_max_timestamp": "2026-03-23T00:00:00",
+  "data_min_timestamp": "2021-03-26T00:00:00",
+  "data_path": "E:\\Analizador_bursatil_3.0\\ACTION(AGAIN-CODEX)\\AGAIN\\config\\benchmarks\\snapshots\\52366e70157c819d\\market_data.parquet",
+  "data_sha256": "d714211ffec131b7560ba758b6aa1ec9a92c3c1760fb8d511efcc16b461e517c",
+  "definition_id": "9c36e00cc4eb6978",
+  "effective_universe": [
+    "BA",
+    "CAT",
+    "CS.PA",
+    "FMX",
+    "FOR.WA",
+    "MRC.WA",
+    "NSRGY",
+    "OR.PA",
+    "SQM"
+  ],
+  "expected_columns": [
+    "Date",
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "Ticker",
+    "Sector"
+  ],
+  "horizon": 60,
+  "metrics": [
+    "MAPE",
+    "MAE",
+    "RMSE",
+    "DirAcc"
+  ],
+  "row_count": 11318,
+  "snapshot_id": "52366e70157c819d",
+  "source_adapter": "again_inference",
+  "split_policy": "common_history_cutoff",
+  "tickers": [
+    "FOR.WA",
+    "MRC.WA",
+    "OR.PA",
+    "CS.PA",
+    "BA",
+    "CAT",
+    "FMX",
+    "TATAMOTORS.NS",
+    "NSRGY",
+    "SQM"
+  ],
+  "time_normalization_policy": "naive_utc"
+}

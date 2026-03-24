@@ -608,7 +608,6 @@ def main():
     _render_sidebar_runtime_status(config)
 
     forecast_service = _get_forecast_service(st.session_state.selected_config_path, years)
-    benchmark_service = _get_benchmark_service(st.session_state.selected_config_path, years)
     readiness = forecast_service.get_model_readiness()
     if readiness.ready:
         st.sidebar.success("Modelo preparado para inferencia")
@@ -624,6 +623,13 @@ def main():
     elif page == "Comparacion historica":
         _render_historical_view(config, forecast_service, years)
     else:
+        try:
+            benchmark_service = _get_benchmark_service(st.session_state.selected_config_path, years)
+        except Exception as exc:
+            logger.exception("No se pudo inicializar el modulo again_benchmark")
+            st.error(f"El modulo again_benchmark no pudo inicializarse: {exc}")
+            st.info("La prediccion TFT y el resto de la app siguen disponibles porque el benchmark esta desacoplado.")
+            return
         _render_benchmark_view(benchmark_service)
 
 
