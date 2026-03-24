@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from app.benchmark_utils import delete_benchmark_row, load_benchmark_history, save_benchmark_to_store
-from app.config_loader import get_default_config_path, load_benchmark_tickers, load_tickers_and_names, load_training_groups
-from app.plot_utils import build_stock_plot
+from app.config_loader import get_default_config_path, load_tickers_and_names, load_training_groups
+from app.plot_utils import build_benchmark_plot, build_stock_plot
 from app.services import BenchmarkService, ForecastService, TrainingService
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
@@ -147,84 +148,212 @@ def _render_historical_view(config: dict, forecast_service: ForecastService, yea
                 st.error(f"Error al comparar con historico para {ticker_input}: {exc}")
 
 
-def _render_benchmark_history(config: dict, benchmark_tickers: list[str]):
-    st.subheader("Historico de benchmarks")
-    benchmark_history, entries = load_benchmark_history(config, benchmark_tickers)
-    format_dict = {("Basico", "Date"): "{}", ("Basico", "Model_Name"): "{}"}
-    for ticker in benchmark_tickers:
-        format_dict[(ticker, "MAPE")] = "{:.2f}%"
-        format_dict[(ticker, "MAE")] = "{:.2f}"
-        format_dict[(ticker, "RMSE")] = "{:.2f}"
-        format_dict[(ticker, "DirAcc")] = "{:.2f}%"
-    for metric in ["MAPE", "DirAcc"]:
-        format_dict[("Media", metric)] = "{:.2f}%"
-    format_dict[("Media", "MAE")] = "{:.2f}"
-    format_dict[("Media", "RMSE")] = "{:.2f}"
-    st.dataframe(benchmark_history.style.format(format_dict))
-
-    st.subheader("Gestion del historico")
-    if not entries:
-        st.info("Todavia no existe historico de benchmark.")
-        return
-
-    if "confirm_delete" not in st.session_state:
-        st.session_state.confirm_delete = None
-
-    for entry in entries:
-        row_id = int(entry["id"])
-        cols = st.columns([0.12, 0.44, 0.44])
-        with cols[0]:
-            if st.button("Borrar", key=f"del_row_{row_id}"):
-                st.session_state.confirm_delete = entry
-        with cols[1]:
-            st.write(f"Fecha: {entry['Date']}")
-        with cols[2]:
-            st.write(f"Modelo: {entry['Model_Name']}")
-
-        if st.session_state.confirm_delete and int(st.session_state.confirm_delete.get("id", -1)) == row_id:
-            confirm_cols = st.columns([0.12, 0.44, 0.44])
-            with confirm_cols[0]:
-                st.warning("Confirmar?")
-            with confirm_cols[1]:
-                if st.button("Si, borrar", key=f"confirm_yes_{row_id}"):
-                    ok = delete_benchmark_row(config, row_id)
-                    st.session_state.confirm_delete = None
-                    if ok:
-                        st.success("Fila borrada")
-                    else:
-                        st.error("No se pudo borrar la fila")
-                    st.rerun()
-            with confirm_cols[2]:
-                if st.button("Cancelar", key=f"confirm_no_{row_id}"):
-                    st.session_state.confirm_delete = None
-                    st.rerun()
+def _serialize_for_ui(value):
+    if is_dataclass(value):
+        return {key: _serialize_for_ui(item) for key, item in asdict(value).items()}
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _serialize_for_ui(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_serialize_for_ui(item) for item in value]
+    return value
 
 
-def _render_benchmark_view(config: dict, benchmark_service: BenchmarkService, benchmark_tickers: list[str]):
+def _combine_benchmark_datetime(selected_date, selected_time):
+    return datetime.combine(selected_date, selected_time).replace(tzinfo=None)
+
+
+def _render_benchmark_run_view(run_view: dict):
+    manifest = run_view["manifest"]
+    summary = run_view["summary"]
+    ticker_results = run_view["ticker_results"]
+    plot_payload = run_view["plot_payload"]
+
+    st.subheader("Resumen de corrida")
+    st.write(f"Run ID: `{manifest.run_id}`")
+    st.write(f"Modo: `{manifest.mode.value}`")
+    st.write(f"Benchmark ID: `{manifest.benchmark_id}`")
+    st.write(f"Modelo: `{manifest.model_name}`")
+    st.write(f"Split date: `{manifest.split_date.isoformat()}`")
+    summary_row = {
+        "run_id": summary.run_id,
+        "mode": summary.mode.value,
+        "requested_tickers": len(summary.requested_tickers),
+        "effective_universe": len(summary.effective_universe),
+        "completed_tickers": len(summary.completed_tickers),
+        "failed_tickers": len(summary.failed_tickers),
+        **summary.metrics,
+    }
+    st.dataframe(pd.DataFrame([summary_row]))
+
+    if ticker_results:
+        metrics_df = pd.DataFrame(
+            [
+                {
+                    "Ticker": result.ticker,
+                    "Observed_Points": len(result.actual_close),
+                    **result.metrics,
+                }
+                for result in ticker_results
+            ]
+        )
+        st.subheader("Metricas por ticker")
+        st.dataframe(metrics_df)
+
+        tickers = [result.ticker for result in ticker_results]
+        selected_ticker = st.selectbox("Ticker de detalle", options=tickers, key=f"benchmark_ticker_{manifest.run_id}")
+        fig = build_benchmark_plot(plot_payload, selected_ticker)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("Manifest y trazabilidad", expanded=False):
+        st.json(_serialize_for_ui(manifest))
+
+
+def _render_legacy_benchmark_history(benchmark_service: BenchmarkService):
+    with st.expander("Modo legacy / exploratorio", expanded=False):
+        legacy = benchmark_service.load_legacy_history()
+        entries = legacy.get("entries") or []
+        if not entries:
+            st.info("No existe historico legacy de benchmark.")
+            return
+        st.warning("El benchmark legacy se conserva solo como compatibilidad exploratoria. No es el benchmark oficial reproducible.")
+        st.dataframe(pd.DataFrame(entries))
+
+
+def _render_benchmark_view(benchmark_service: BenchmarkService):
     readiness = benchmark_service.get_model_readiness()
     if not readiness.ready:
         _render_model_not_ready(readiness)
         return
 
-    st.write("Tickers del benchmark:", " ".join(benchmark_tickers))
-    if st.button("Generar benchmark"):
-        with st.spinner("Generando benchmark..."):
-            try:
-                all_results, fig, metrics_df = benchmark_service.run(
-                    benchmark_tickers,
-                    historical_period_days=st.session_state.historical_period_days,
-                )
-                benchmark_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                save_benchmark_to_store(config, benchmark_date, all_results, config["model_name"])
-                st.plotly_chart(fig, use_container_width=True)
-                if not metrics_df.empty:
-                    st.subheader("Metricas por ticker")
-                    st.dataframe(metrics_df.style.format({"MAPE": "{:.2f}%", "MAE": "{:.2f}", "RMSE": "{:.2f}", "DirAcc": "{:.2f}%"}))
-            except Exception as exc:
-                logger.exception("Error al generar benchmark")
-                st.error(f"Error al generar benchmark: {exc}")
+    benchmark_service.ensure_default_definition()
+    definitions = benchmark_service.list_definitions()
+    if not definitions:
+        st.error("No hay definiciones de benchmark disponibles.")
+        return
 
-    _render_benchmark_history(config, benchmark_tickers)
+    definition_labels = {
+        f"{entry.label} [{entry.benchmark_id}:{entry.definition_id}]": entry.definition_id
+        for entry in definitions
+    }
+    selected_definition_label = st.selectbox("Definicion oficial", options=list(definition_labels.keys()))
+    selected_definition_id = definition_labels[selected_definition_label]
+
+    now_value = datetime.now().replace(microsecond=0, second=0)
+    benchmark_date = st.date_input("As-of date", value=now_value.date(), key="benchmark_as_of_date")
+    benchmark_time = st.time_input("As-of time", value=now_value.time(), key="benchmark_as_of_time")
+    as_of_timestamp = _combine_benchmark_datetime(benchmark_date, benchmark_time)
+
+    mode_label = st.radio(
+        "Modo de benchmark",
+        options=["Frozen oficial", "Live exploratorio"],
+        horizontal=True,
+    )
+    if mode_label == "Frozen oficial":
+        st.success("Modo oficial reproducible: crea snapshot inmutable, manifiesto completo y permite rerun exacto.")
+    else:
+        st.warning("Modo live exploratorio: usa descarga viva y no debe interpretarse como benchmark oficial reproducible.")
+
+    run_button_label = "Ejecutar frozen benchmark" if mode_label == "Frozen oficial" else "Ejecutar live benchmark"
+    if st.button(run_button_label, type="primary"):
+        with st.spinner("Ejecutando benchmark..."):
+            try:
+                if mode_label == "Frozen oficial":
+                    run_bundle = benchmark_service.run_frozen(selected_definition_id, as_of_timestamp)
+                else:
+                    run_bundle = benchmark_service.run_live(selected_definition_id, as_of_timestamp)
+                st.session_state.last_benchmark_run_id = run_bundle.manifest.run_id
+                st.success(f"Benchmark completado: {run_bundle.manifest.run_id}")
+                _render_benchmark_run_view(benchmark_service.load_run_view(run_bundle.manifest.run_id))
+            except Exception as exc:
+                logger.exception("Error al ejecutar benchmark")
+                st.error(f"Error al ejecutar benchmark: {exc}")
+
+    st.subheader("Catalogo de runs")
+    run_filters_cols = st.columns(4)
+    with run_filters_cols[0]:
+        filter_benchmark_id = st.text_input("Filtro benchmark_id", value="")
+    with run_filters_cols[1]:
+        filter_mode_label = st.selectbox("Filtro modo", options=["Todos", "frozen", "live"], index=0)
+    with run_filters_cols[2]:
+        filter_model_name = st.text_input("Filtro modelo", value="")
+    with run_filters_cols[3]:
+        filter_run_id = st.text_input("Filtro run_id", value="")
+    filter_date_text = st.text_input("Filtro fecha (YYYY-MM-DD)", value="")
+
+    mode_filter = None if filter_mode_label == "Todos" else filter_mode_label
+    runs = benchmark_service.list_runs(
+        benchmark_id=filter_benchmark_id or None,
+        mode=mode_filter,
+        model_name=filter_model_name or None,
+        run_id=filter_run_id or None,
+    )
+    runs_df = pd.DataFrame(runs)
+    if not runs_df.empty and filter_date_text:
+        runs_df = runs_df[runs_df["created_at"].astype(str).str.contains(filter_date_text, na=False)]
+    st.dataframe(runs_df)
+
+    available_run_ids = runs_df["run_id"].tolist() if not runs_df.empty else []
+    if available_run_ids:
+        default_run_id = st.session_state.get("last_benchmark_run_id", available_run_ids[0])
+        if default_run_id not in available_run_ids:
+            default_run_id = available_run_ids[0]
+        selected_run_id = st.selectbox(
+            "Run para inspeccion",
+            options=available_run_ids,
+            index=available_run_ids.index(default_run_id),
+        )
+        rerun_cols = st.columns(2)
+        with rerun_cols[0]:
+            if st.button("Cargar run seleccionado"):
+                _render_benchmark_run_view(benchmark_service.load_run_view(selected_run_id))
+        with rerun_cols[1]:
+            if st.button("Rerun exacto del frozen seleccionado"):
+                try:
+                    rerun_bundle = benchmark_service.rerun_exact(selected_run_id)
+                    st.success(f"Rerun exacto disponible: {rerun_bundle.manifest.run_id}")
+                    _render_benchmark_run_view(benchmark_service.load_run_view(rerun_bundle.manifest.run_id))
+                except Exception as exc:
+                    logger.exception("Error al reejecutar benchmark frozen")
+                    st.error(f"No se pudo reejecutar el frozen benchmark: {exc}")
+
+        st.subheader("Comparacion entre corridas")
+        comparison_cols = st.columns(2)
+        with comparison_cols[0]:
+            left_run_id = st.selectbox("Run A", options=available_run_ids, key="comparison_left_run")
+        with comparison_cols[1]:
+            right_run_id = st.selectbox(
+                "Run B",
+                options=available_run_ids,
+                index=min(1, len(available_run_ids) - 1),
+                key="comparison_right_run",
+            )
+        if left_run_id and right_run_id and left_run_id != right_run_id:
+            try:
+                comparison = benchmark_service.compare_runs(left_run_id, right_run_id)
+                st.write("Delta de metricas globales")
+                st.dataframe(pd.DataFrame([comparison.summary_delta]))
+                if comparison.ticker_deltas:
+                    st.write("Delta por ticker")
+                    st.dataframe(
+                        pd.DataFrame(
+                            [
+                                {
+                                    "ticker": item["ticker"],
+                                    **item["delta_metrics"],
+                                }
+                                for item in comparison.ticker_deltas
+                            ]
+                        )
+                    )
+            except Exception as exc:
+                logger.exception("Error al comparar corridas de benchmark")
+                st.error(f"No se pudieron comparar las corridas: {exc}")
+
+    _render_legacy_benchmark_history(benchmark_service)
 
 
 def _resolve_profile_options(base_config: dict, training_service: TrainingService) -> tuple[list[dict[str, str]], str]:
@@ -459,7 +588,6 @@ def main():
     else:
         st.sidebar.error("Modelo no preparado")
 
-    benchmark_tickers = load_benchmark_tickers(config)
     page = st.sidebar.selectbox("Seccion", ["Entrenamiento", "Prediccion futura", "Comparacion historica", "Benchmark"])
 
     if page == "Entrenamiento":
@@ -469,7 +597,7 @@ def main():
     elif page == "Comparacion historica":
         _render_historical_view(config, forecast_service, years)
     else:
-        _render_benchmark_view(config, benchmark_service, benchmark_tickers)
+        _render_benchmark_view(benchmark_service)
 
 
 if __name__ == "__main__":

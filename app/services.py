@@ -6,7 +6,8 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from app.benchmark_utils import run_benchmark
+from again_benchmark import BenchmarkModuleConfig, BenchmarkRunner, BenchmarkStorage, BenchmarkUIAdapter
+from again_benchmark.adapters import AgainInferenceAdapter, load_legacy_benchmark_rows
 from scripts.data_fetcher import DataFetcher
 from scripts.prediction_engine import generate_predictions, load_data_and_model, preprocess_data
 from scripts.runtime_config import ConfigManager
@@ -94,6 +95,11 @@ class BenchmarkService:
         self.config_manager = config_manager
         self.config = config_manager.config
         self.years = years
+        module_config = BenchmarkModuleConfig.from_again_config(self.config)
+        storage = BenchmarkStorage(module_config.storage_root)
+        adapter = AgainInferenceAdapter(config_manager)
+        runner = BenchmarkRunner(storage, adapter)
+        self.ui = BenchmarkUIAdapter(storage, runner)
 
     def get_model_readiness(self):
         return assess_model_readiness(self.config)
@@ -101,19 +107,47 @@ class BenchmarkService:
     def get_runtime_status(self):
         return resolve_execution_context(self.config, purpose="predict").to_display_dict()
 
-    def run(self, benchmark_tickers, historical_period_days: int):
+    def ensure_default_definition(self):
+        return self.ui.ensure_default_definition(self.config)
+
+    def list_definitions(self):
+        return self.ui.list_definitions()
+
+    def run_live(self, definition_id: str, as_of_timestamp: datetime):
         report = self.get_model_readiness()
         if not report.ready:
             details = " | ".join(report.issues)
             raise RuntimeError(f"{report.summary} Detalles: {details}")
-        return run_benchmark(
-            config=self.config,
-            config_manager=self.config_manager,
-            benchmark_tickers=benchmark_tickers,
-            years=self.years,
-            historical_period_days=historical_period_days,
-            run_timestamp=datetime.now().replace(tzinfo=None),
-        )
+        return self.ui.run_live(definition_id, as_of_timestamp=as_of_timestamp)
+
+    def run_frozen(self, definition_id: str, as_of_timestamp: datetime):
+        report = self.get_model_readiness()
+        if not report.ready:
+            details = " | ".join(report.issues)
+            raise RuntimeError(f"{report.summary} Detalles: {details}")
+        return self.ui.run_frozen(definition_id, as_of_timestamp=as_of_timestamp)
+
+    def rerun_exact(self, run_id: str):
+        return self.ui.rerun_from_run_id(run_id)
+
+    def list_runs(
+        self,
+        *,
+        benchmark_id: str | None = None,
+        mode: str | None = None,
+        model_name: str | None = None,
+        run_id: str | None = None,
+    ):
+        return self.ui.list_runs(benchmark_id=benchmark_id, mode=mode, model_name=model_name, run_id=run_id)
+
+    def load_run_view(self, run_id: str):
+        return self.ui.load_run_view(run_id)
+
+    def compare_runs(self, left_run_id: str, right_run_id: str):
+        return self.ui.compare_runs(left_run_id, right_run_id)
+
+    def load_legacy_history(self):
+        return load_legacy_benchmark_rows(self.config)
 
 
 class TrainingService:

@@ -144,3 +144,51 @@ def build_stock_plot(
         }
     )
     return fig, pred_df
+
+
+def build_benchmark_plot(plot_payload: dict, ticker: str):
+    ticker_payload = (plot_payload.get("tickers") or {}).get(ticker)
+    if not ticker_payload:
+        raise ValueError(f"No existe payload de benchmark para {ticker}")
+
+    historical_dates = pd.to_datetime(ticker_payload["historical_dates"]).tz_localize(None)
+    forecast_dates = pd.to_datetime(ticker_payload["forecast_dates"]).tz_localize(None)
+    historical_close = pd.Series(ticker_payload["historical_close"], index=historical_dates)
+    actual_close = pd.Series(ticker_payload["actual_close"], index=forecast_dates)
+    predicted_close = pd.Series(ticker_payload["predicted_close"], index=forecast_dates)
+
+    fig = create_base_plot(f"Benchmark reproducible para {ticker}", split_date=ticker_payload["split_date"])
+    fig.add_trace(
+        go.Scatter(
+            x=historical_close.index.tolist(),
+            y=historical_close.tolist(),
+            mode="lines",
+            name="Historico observado",
+            line=dict(color="#0B5FFF"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=actual_close.index.tolist(),
+            y=actual_close.tolist(),
+            mode="lines",
+            name="Real OOS",
+            line=dict(color="#00A36C"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=predicted_close.index.tolist(),
+            y=predicted_close.tolist(),
+            mode="lines",
+            name="Prediccion OOS",
+            line=dict(color="#FF8C00", dash="dash"),
+        )
+    )
+    y_range = _compute_robust_y_range(
+        historical_close.tolist() + actual_close.tolist(),
+        predicted_close.tolist(),
+    )
+    if y_range is not None:
+        fig.update_yaxes(range=y_range)
+    return fig

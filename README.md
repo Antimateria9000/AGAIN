@@ -45,6 +45,24 @@ Limitaciones explicitas de `again_econ`:
 - no soporta todavia intradia, margin, borrow, derivados ni politicas avanzadas de portfolio
 - no es una mini-fork de PyBroker ni depende de internals fragiles del pipeline principal
 
+## Modulo de benchmark `again_benchmark`
+
+El repositorio incluye un modulo nuevo e independiente llamado `again_benchmark` para benchmark estadistico reproducible y auditable. Su filosofia es separar por completo:
+
+- definicion del benchmark
+- snapshot de datos inmutable
+- runner de corrida
+- manifests de snapshot y run
+- persistencia en artefactos + catalogo ligero
+- adaptador fino de UI para Streamlit
+
+`again_benchmark` soporta dos modos claramente distintos:
+
+- `frozen`: benchmark oficial reproducible, ejecutado desde snapshot materializado y rerunnable desde artefactos congelados
+- `live`: benchmark exploratorio, no oficial y no reproducible, pensado para inspeccion rapida
+
+El benchmark legacy basado en `app/benchmark_utils.py` se conserva solo como compatibilidad exploratoria. No debe confundirse con el flujo oficial reproducible.
+
 ## Requisitos
 
 - Python 3.11
@@ -130,6 +148,20 @@ app/
   config_loader.py
   plot_utils.py
   services.py
+again_benchmark/
+  adapters/
+  comparison.py
+  config.py
+  contracts.py
+  definitions.py
+  manifests.py
+  metrics.py
+  reports.py
+  runner.py
+  snapshots.py
+  storage.py
+  ui_adapter.py
+  validation.py
 config/
   benchmark_tickers.yaml
   config.yaml
