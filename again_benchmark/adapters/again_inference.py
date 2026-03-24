@@ -54,14 +54,13 @@ class AgainInferenceAdapter:
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.config = config_manager.config
-        self._session = None
+        self._sessions_by_ticker: dict[str, tuple[object, dict, object]] = {}
         self._runtime = None
 
     def reset(self) -> None:
-        if self._session is not None:
-            _, _, model = self._session
+        for _, _, model in self._sessions_by_ticker.values():
             del model
-            self._session = None
+        self._sessions_by_ticker = {}
         if self._runtime is None:
             self._runtime = resolve_execution_context(self.config, purpose="predict")
         if self._runtime.uses_cuda:
@@ -78,7 +77,7 @@ class AgainInferenceAdapter:
         return market_data
 
     def _ensure_session(self, ticker: str, observed_data: pd.DataFrame) -> tuple[object, dict, object]:
-        if self._session is None:
+        if ticker not in self._sessions_by_ticker:
             _, dataset, normalizers, model = load_data_and_model(
                 self.config,
                 ticker,
@@ -86,8 +85,8 @@ class AgainInferenceAdapter:
                 years=self.config["prediction"]["years"],
                 raw_data=observed_data,
             )
-            self._session = (dataset, normalizers, model)
-        return self._session
+            self._sessions_by_ticker[ticker] = (dataset, normalizers, model)
+        return self._sessions_by_ticker[ticker]
 
     def evaluate_ticker(
         self,

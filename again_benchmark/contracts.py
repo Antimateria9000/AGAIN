@@ -33,11 +33,38 @@ class BenchmarkMode(str, Enum):
     FROZEN = "frozen"
 
 
+class ValidationState(str, Enum):
+    LIVE_EXPLORATORY = "live_exploratory"
+    FROZEN_VALIDATED = "frozen_validated"
+
+
 class SplitPolicy(str, Enum):
     COMMON_HISTORY_CUTOFF = "common_history_cutoff"
 
 
+class TimeNormalizationPolicy(str, Enum):
+    NAIVE_UTC = "naive_utc"
+
+
+class DiscardReason(str, Enum):
+    INSUFFICIENT_HISTORY = "insufficient_history"
+    ADAPTER_ERROR = "adapter_error"
+
+
 DEFAULT_METRICS = ("MAPE", "MAE", "RMSE", "DirAcc")
+
+
+@dataclass(frozen=True)
+class BenchmarkDiscardedTicker:
+    ticker: str
+    reason: DiscardReason
+    detail: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.ticker:
+            raise BenchmarkValidationError("BenchmarkDiscardedTicker.ticker es obligatorio")
+        if self.detail is not None and not self.detail.strip():
+            raise BenchmarkValidationError("BenchmarkDiscardedTicker.detail no puede ser vacio")
 
 
 @dataclass(frozen=True)
@@ -75,6 +102,8 @@ class BenchmarkDefinition:
             raise BenchmarkValidationError("historical_display_days debe ser > 0")
         if not self.metrics:
             raise BenchmarkValidationError("metrics no puede estar vacio")
+        if len(set(self.metrics)) != len(self.metrics):
+            raise BenchmarkValidationError("metrics no puede contener duplicados")
 
 
 @dataclass(frozen=True)
@@ -93,6 +122,9 @@ class BenchmarkSnapshotManifest:
     row_count: int
     data_min_timestamp: datetime
     data_max_timestamp: datetime
+    expected_columns: tuple[str, ...]
+    time_normalization_policy: TimeNormalizationPolicy
+    source_adapter: str
     data_path: str
     data_sha256: str
 
@@ -111,6 +143,10 @@ class BenchmarkSnapshotManifest:
         )
         if not self.snapshot_id:
             raise BenchmarkValidationError("snapshot_id es obligatorio")
+        if not self.expected_columns:
+            raise BenchmarkValidationError("expected_columns no puede estar vacio")
+        if not self.source_adapter:
+            raise BenchmarkValidationError("source_adapter es obligatorio")
         if self.row_count <= 0:
             raise BenchmarkValidationError("row_count debe ser > 0")
         if not self.data_sha256:
@@ -129,8 +165,10 @@ class BenchmarkRunManifest:
     split_date: datetime
     tickers: tuple[str, ...]
     effective_universe: tuple[str, ...]
+    discarded_tickers: tuple[BenchmarkDiscardedTicker, ...]
     horizon: int
     metrics: tuple[str, ...]
+    split_policy: SplitPolicy
     model_name: str
     profile_path: str | None
     config_fingerprint: str | None
@@ -144,6 +182,12 @@ class BenchmarkRunManifest:
     torch_version: str | None
     backend: str | None
     device: str | None
+    adapter_name: str
+    validation_state: ValidationState
+    summary_sha256: str | None = None
+    metrics_sha256: str | None = None
+    ticker_results_sha256: str | None = None
+    plot_payload_sha256: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "created_at", normalize_naive_utc_timestamp(self.created_at, field_name="created_at"))
@@ -155,8 +199,14 @@ class BenchmarkRunManifest:
             raise BenchmarkValidationError("horizon debe ser > 0")
         if not self.tickers:
             raise BenchmarkValidationError("tickers no puede estar vacio")
+        if not self.adapter_name:
+            raise BenchmarkValidationError("adapter_name es obligatorio")
         if self.mode == BenchmarkMode.FROZEN and (not self.snapshot_id or not self.snapshot_sha256):
             raise BenchmarkValidationError("Los frozen benchmarks requieren snapshot_id y snapshot_sha256")
+        if self.mode == BenchmarkMode.FROZEN and self.validation_state != ValidationState.FROZEN_VALIDATED:
+            raise BenchmarkValidationError("Los frozen benchmarks deben persistirse como frozen_validated")
+        if self.mode == BenchmarkMode.LIVE and self.validation_state != ValidationState.LIVE_EXPLORATORY:
+            raise BenchmarkValidationError("Los live benchmarks deben persistirse como live_exploratory")
 
 
 @dataclass(frozen=True)
@@ -170,6 +220,7 @@ class BenchmarkTickerResult:
     predicted_close: tuple[float, ...]
     metrics: dict[str, float]
     last_observed_close: float
+    status: str = "completed"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "split_date", normalize_naive_utc_timestamp(self.split_date, field_name="split_date"))
@@ -185,6 +236,8 @@ class BenchmarkTickerResult:
         )
         if not self.ticker:
             raise BenchmarkValidationError("ticker es obligatorio")
+        if self.status != "completed":
+            raise BenchmarkValidationError("BenchmarkTickerResult.status debe ser 'completed'")
         if len(self.forecast_dates) != len(self.actual_close) or len(self.forecast_dates) != len(self.predicted_close):
             raise BenchmarkValidationError("Las series forecast_dates, actual_close y predicted_close deben estar alineadas")
         if not self.historical_dates or not self.historical_close:
@@ -202,11 +255,17 @@ class BenchmarkSummary:
     effective_universe: tuple[str, ...]
     completed_tickers: tuple[str, ...]
     failed_tickers: tuple[str, ...]
+    discarded_tickers: tuple[BenchmarkDiscardedTicker, ...]
+    validation_state: ValidationState
     metrics: dict[str, float]
 
     def __post_init__(self) -> None:
         if not self.run_id:
             raise BenchmarkValidationError("BenchmarkSummary.run_id es obligatorio")
+        if self.mode == BenchmarkMode.FROZEN and self.validation_state != ValidationState.FROZEN_VALIDATED:
+            raise BenchmarkValidationError("BenchmarkSummary frozen debe marcarse como frozen_validated")
+        if self.mode == BenchmarkMode.LIVE and self.validation_state != ValidationState.LIVE_EXPLORATORY:
+            raise BenchmarkValidationError("BenchmarkSummary live debe marcarse como live_exploratory")
         _ensure_finite_mapping(self.metrics, field_name="metrics")
 
 
@@ -240,10 +299,15 @@ class RunCatalogEntry:
     created_at: datetime
     snapshot_id: str | None
     model_name: str
+    effective_universe: tuple[str, ...] = field(default_factory=tuple)
+    validation_state: ValidationState = ValidationState.LIVE_EXPLORATORY
+    discarded_count: int = 0
     summary_metrics: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "created_at", normalize_naive_utc_timestamp(self.created_at, field_name="created_at"))
+        if self.discarded_count < 0:
+            raise BenchmarkValidationError("discarded_count no puede ser negativo")
         _ensure_finite_mapping(self.summary_metrics, field_name="summary_metrics")
 
 

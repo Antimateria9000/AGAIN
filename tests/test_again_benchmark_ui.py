@@ -18,7 +18,10 @@ def test_ui_adapter_prepares_runs_and_plot_payloads(tmp_path):
 
     assert run_view["manifest"].run_id == run_bundle.manifest.run_id
     assert "AAA" in run_view["plot_payload"]["tickers"]
-    assert len(ui.list_runs()) == 1
+    rows = ui.list_runs()
+    assert len(rows) == 1
+    assert rows[0]["validation_state"] == "live_exploratory"
+    assert rows[0]["effective_universe_size"] == 2
 
 
 def test_run_comparison_produces_summary_and_per_ticker_deltas(tmp_path):

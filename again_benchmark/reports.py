@@ -31,6 +31,10 @@ def build_runs_table_rows(entries) -> list[dict]:
             "created_at": entry.created_at.isoformat(),
             "snapshot_id": entry.snapshot_id,
             "model_name": entry.model_name,
+            "validation_state": entry.validation_state.value,
+            "effective_universe_size": len(entry.effective_universe),
+            "effective_universe": ", ".join(entry.effective_universe),
+            "discarded_count": entry.discarded_count,
             **entry.summary_metrics,
         }
         for entry in entries
@@ -42,5 +46,13 @@ def build_run_view(bundle: BenchmarkRunBundle) -> dict:
         "manifest": bundle.manifest,
         "summary": bundle.summary,
         "ticker_results": bundle.ticker_results,
+        "discarded_tickers": bundle.summary.discarded_tickers,
+        "artifact_audit": {
+            "snapshot_sha256": bundle.manifest.snapshot_sha256,
+            "summary_sha256": bundle.manifest.summary_sha256,
+            "metrics_sha256": bundle.manifest.metrics_sha256,
+            "ticker_results_sha256": bundle.manifest.ticker_results_sha256,
+            "plot_payload_sha256": bundle.manifest.plot_payload_sha256,
+        },
         "plot_payload": bundle.plot_payload,
     }

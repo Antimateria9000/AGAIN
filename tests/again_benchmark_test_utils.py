@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from again_benchmark.contracts import BenchmarkDefinition, BenchmarkTickerResult
+from again_benchmark.errors import BenchmarkAdapterError
 from again_benchmark.metrics import compute_metric_values
 
 
@@ -32,7 +33,7 @@ def build_market_data() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_definition() -> BenchmarkDefinition:
+def build_definition(*, metrics: tuple[str, ...] | None = None) -> BenchmarkDefinition:
     return BenchmarkDefinition(
         benchmark_id="again_benchmark_test",
         benchmark_version=1,
@@ -40,6 +41,7 @@ def build_definition() -> BenchmarkDefinition:
         label="Benchmark de prueba",
         tickers=("AAA", "BBB"),
         horizon=2,
+        metrics=metrics or ("MAPE", "MAE", "RMSE", "DirAcc"),
         lookback_years=1,
         historical_display_days=30,
     )
@@ -49,6 +51,7 @@ def build_definition() -> BenchmarkDefinition:
 class FakeBenchmarkAdapter:
     market_data: pd.DataFrame
     bias: float = 0.0
+    failing_tickers: tuple[str, ...] = ()
 
     adapter_name: str = "fake_adapter"
 
@@ -62,6 +65,8 @@ class FakeBenchmarkAdapter:
         ticker: str,
         split_date: datetime,
     ) -> BenchmarkTickerResult:
+        if ticker in self.failing_tickers:
+            raise BenchmarkAdapterError(f"Fallo controlado para {ticker}")
         ticker_frame = market_data[market_data["Ticker"] == ticker].copy().sort_values("Date")
         observed = ticker_frame[ticker_frame["Date"] <= split_date].copy()
         future = ticker_frame[ticker_frame["Date"] > split_date].copy().head(definition.horizon)

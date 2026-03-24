@@ -45,6 +45,8 @@ class BenchmarkUIAdapter:
         mode: str | None = None,
         model_name: str | None = None,
         run_id: str | None = None,
+        validation_state: str | None = None,
+        effective_universe_contains: str | None = None,
     ) -> list[dict]:
         entries = list(self.storage.list_runs())
         if benchmark_id:
@@ -55,6 +57,11 @@ class BenchmarkUIAdapter:
             entries = [entry for entry in entries if model_name.lower() in entry.model_name.lower()]
         if run_id:
             entries = [entry for entry in entries if run_id.lower() in entry.run_id.lower()]
+        if validation_state:
+            entries = [entry for entry in entries if entry.validation_state.value == validation_state]
+        if effective_universe_contains:
+            needle = effective_universe_contains.lower()
+            entries = [entry for entry in entries if any(needle in ticker.lower() for ticker in entry.effective_universe)]
         return build_runs_table_rows(tuple(entries))
 
     def load_run_view(self, run_id: str) -> dict:

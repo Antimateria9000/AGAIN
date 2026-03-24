@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from again_benchmark.contracts import BenchmarkSummary, BenchmarkTickerResult
+from again_benchmark.contracts import BenchmarkDiscardedTicker, BenchmarkSummary, BenchmarkTickerResult, ValidationState
 
 
 def compute_metric_values(predicted_close, actual_close, predicted_step_returns, actual_step_returns) -> dict[str, float]:
@@ -29,6 +29,10 @@ def compute_metric_values(predicted_close, actual_close, predicted_step_returns,
     }
 
 
+def select_metric_values(metrics: dict[str, float], active_metrics: tuple[str, ...]) -> dict[str, float]:
+    return {metric_name: float(metrics[metric_name]) for metric_name in active_metrics}
+
+
 def summarize_results(
     *,
     run_id: str,
@@ -39,9 +43,12 @@ def summarize_results(
     effective_universe: tuple[str, ...],
     ticker_results: tuple[BenchmarkTickerResult, ...],
     failed_tickers: tuple[str, ...],
+    discarded_tickers: tuple[BenchmarkDiscardedTicker, ...],
+    active_metrics: tuple[str, ...],
+    validation_state: ValidationState,
 ) -> BenchmarkSummary:
     if not ticker_results:
-        metrics = {"MAPE": 0.0, "MAE": 0.0, "RMSE": 0.0, "DirAcc": 0.0}
+        metrics = {metric_name: 0.0 for metric_name in active_metrics}
     else:
         predicted = np.concatenate([np.asarray(result.predicted_close, dtype=float) for result in ticker_results])
         actual = np.concatenate([np.asarray(result.actual_close, dtype=float) for result in ticker_results])
@@ -54,7 +61,10 @@ def summarize_results(
             prior_pred = np.concatenate(([float(result.last_observed_close)], predicted_prices[:-1]))
             actual_returns.append((actual_prices / np.where(prior_actual == 0.0, 1e-12, prior_actual)) - 1.0)
             predicted_returns.append((predicted_prices / np.where(prior_pred == 0.0, 1e-12, prior_pred)) - 1.0)
-        metrics = compute_metric_values(predicted, actual, np.concatenate(predicted_returns), np.concatenate(actual_returns))
+        metrics = select_metric_values(
+            compute_metric_values(predicted, actual, np.concatenate(predicted_returns), np.concatenate(actual_returns)),
+            active_metrics,
+        )
     return BenchmarkSummary(
         run_id=run_id,
         benchmark_id=benchmark_id,
@@ -64,5 +74,7 @@ def summarize_results(
         effective_universe=effective_universe,
         completed_tickers=tuple(result.ticker for result in ticker_results),
         failed_tickers=failed_tickers,
+        discarded_tickers=discarded_tickers,
+        validation_state=validation_state,
         metrics=metrics,
     )

@@ -170,24 +170,38 @@ def _render_benchmark_run_view(run_view: dict):
     manifest = run_view["manifest"]
     summary = run_view["summary"]
     ticker_results = run_view["ticker_results"]
+    discarded_tickers = run_view["discarded_tickers"]
+    artifact_audit = run_view["artifact_audit"]
     plot_payload = run_view["plot_payload"]
 
     st.subheader("Resumen de corrida")
     st.write(f"Run ID: `{manifest.run_id}`")
     st.write(f"Modo: `{manifest.mode.value}`")
+    st.write(f"Estado de validacion: `{manifest.validation_state.value}`")
     st.write(f"Benchmark ID: `{manifest.benchmark_id}`")
     st.write(f"Modelo: `{manifest.model_name}`")
     st.write(f"Split date: `{manifest.split_date.isoformat()}`")
+    st.write(f"Snapshot ID: `{manifest.snapshot_id or 'N/A'}`")
     summary_row = {
         "run_id": summary.run_id,
         "mode": summary.mode.value,
+        "validation_state": summary.validation_state.value,
         "requested_tickers": len(summary.requested_tickers),
         "effective_universe": len(summary.effective_universe),
         "completed_tickers": len(summary.completed_tickers),
         "failed_tickers": len(summary.failed_tickers),
+        "discarded_tickers": len(summary.discarded_tickers),
         **summary.metrics,
     }
     st.dataframe(pd.DataFrame([summary_row]))
+
+    if discarded_tickers:
+        st.subheader("Descartes y razones")
+        st.dataframe(
+            pd.DataFrame(
+                [{"ticker": item.ticker, "reason": item.reason.value, "detail": item.detail} for item in discarded_tickers]
+            )
+        )
 
     if ticker_results:
         metrics_df = pd.DataFrame(
@@ -210,6 +224,8 @@ def _render_benchmark_run_view(run_view: dict):
 
     with st.expander("Manifest y trazabilidad", expanded=False):
         st.json(_serialize_for_ui(manifest))
+        st.write("Checksums y artefactos auditables")
+        st.json(_serialize_for_ui(artifact_audit))
 
 
 def _render_legacy_benchmark_history(benchmark_service: BenchmarkService):
@@ -246,6 +262,7 @@ def _render_benchmark_view(benchmark_service: BenchmarkService):
     benchmark_date = st.date_input("As-of date", value=now_value.date(), key="benchmark_as_of_date")
     benchmark_time = st.time_input("As-of time", value=now_value.time(), key="benchmark_as_of_time")
     as_of_timestamp = _combine_benchmark_datetime(benchmark_date, benchmark_time)
+    st.caption("La fecha/hora seleccionada se persistira en el snapshot y en el run manifest. El valor por defecto usa el reloj local solo como conveniencia de UI.")
 
     mode_label = st.radio(
         "Modo de benchmark",
@@ -273,7 +290,7 @@ def _render_benchmark_view(benchmark_service: BenchmarkService):
                 st.error(f"Error al ejecutar benchmark: {exc}")
 
     st.subheader("Catalogo de runs")
-    run_filters_cols = st.columns(4)
+    run_filters_cols = st.columns(5)
     with run_filters_cols[0]:
         filter_benchmark_id = st.text_input("Filtro benchmark_id", value="")
     with run_filters_cols[1]:
@@ -282,14 +299,24 @@ def _render_benchmark_view(benchmark_service: BenchmarkService):
         filter_model_name = st.text_input("Filtro modelo", value="")
     with run_filters_cols[3]:
         filter_run_id = st.text_input("Filtro run_id", value="")
+    with run_filters_cols[4]:
+        filter_validation_label = st.selectbox(
+            "Filtro validacion",
+            options=["Todos", "frozen_validated", "live_exploratory"],
+            index=0,
+        )
     filter_date_text = st.text_input("Filtro fecha (YYYY-MM-DD)", value="")
+    filter_universe_text = st.text_input("Filtro universo efectivo contiene", value="")
 
     mode_filter = None if filter_mode_label == "Todos" else filter_mode_label
+    validation_filter = None if filter_validation_label == "Todos" else filter_validation_label
     runs = benchmark_service.list_runs(
         benchmark_id=filter_benchmark_id or None,
         mode=mode_filter,
         model_name=filter_model_name or None,
         run_id=filter_run_id or None,
+        validation_state=validation_filter,
+        effective_universe_contains=filter_universe_text or None,
     )
     runs_df = pd.DataFrame(runs)
     if not runs_df.empty and filter_date_text:

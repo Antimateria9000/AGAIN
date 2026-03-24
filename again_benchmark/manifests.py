@@ -7,8 +7,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from again_benchmark.contracts import (
     BenchmarkComparisonResult,
+    BenchmarkDiscardedTicker,
     BenchmarkDefinition,
     BenchmarkMode,
     BenchmarkRunManifest,
@@ -16,8 +19,11 @@ from again_benchmark.contracts import (
     BenchmarkSummary,
     BenchmarkTickerResult,
     DefinitionCatalogEntry,
+    DiscardReason,
     RunCatalogEntry,
     SplitPolicy,
+    TimeNormalizationPolicy,
+    ValidationState,
 )
 
 
@@ -43,8 +49,18 @@ def write_json(path: str | Path, payload: Any) -> None:
     target.write_text(json.dumps(_serialize(payload), ensure_ascii=True, sort_keys=True, indent=2), encoding="utf-8")
 
 
+def write_yaml(path: str | Path, payload: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(_serialize(payload), allow_unicode=False, sort_keys=True), encoding="utf-8")
+
+
 def read_json(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def read_yaml(path: str | Path) -> dict[str, Any]:
+    return yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
 
 def definition_from_dict(payload: dict[str, Any]) -> BenchmarkDefinition:
@@ -79,6 +95,9 @@ def snapshot_manifest_from_dict(payload: dict[str, Any]) -> BenchmarkSnapshotMan
         row_count=int(payload["row_count"]),
         data_min_timestamp=datetime.fromisoformat(payload["data_min_timestamp"]),
         data_max_timestamp=datetime.fromisoformat(payload["data_max_timestamp"]),
+        expected_columns=tuple(str(value) for value in payload["expected_columns"]),
+        time_normalization_policy=TimeNormalizationPolicy(str(payload["time_normalization_policy"])),
+        source_adapter=str(payload["source_adapter"]),
         data_path=str(payload["data_path"]),
         data_sha256=str(payload["data_sha256"]),
     )
@@ -96,8 +115,10 @@ def run_manifest_from_dict(payload: dict[str, Any]) -> BenchmarkRunManifest:
         split_date=datetime.fromisoformat(payload["split_date"]),
         tickers=tuple(str(value) for value in payload["tickers"]),
         effective_universe=tuple(str(value) for value in payload["effective_universe"]),
+        discarded_tickers=tuple(discarded_ticker_from_dict(item) for item in payload.get("discarded_tickers", [])),
         horizon=int(payload["horizon"]),
         metrics=tuple(str(value) for value in payload["metrics"]),
+        split_policy=SplitPolicy(str(payload["split_policy"])),
         model_name=str(payload["model_name"]),
         profile_path=str(payload["profile_path"]) if payload.get("profile_path") is not None else None,
         config_fingerprint=str(payload["config_fingerprint"]) if payload.get("config_fingerprint") is not None else None,
@@ -111,6 +132,12 @@ def run_manifest_from_dict(payload: dict[str, Any]) -> BenchmarkRunManifest:
         torch_version=str(payload["torch_version"]) if payload.get("torch_version") is not None else None,
         backend=str(payload["backend"]) if payload.get("backend") is not None else None,
         device=str(payload["device"]) if payload.get("device") is not None else None,
+        adapter_name=str(payload["adapter_name"]),
+        validation_state=ValidationState(str(payload["validation_state"])),
+        summary_sha256=str(payload["summary_sha256"]) if payload.get("summary_sha256") is not None else None,
+        metrics_sha256=str(payload["metrics_sha256"]) if payload.get("metrics_sha256") is not None else None,
+        ticker_results_sha256=str(payload["ticker_results_sha256"]) if payload.get("ticker_results_sha256") is not None else None,
+        plot_payload_sha256=str(payload["plot_payload_sha256"]) if payload.get("plot_payload_sha256") is not None else None,
     )
 
 
@@ -125,6 +152,15 @@ def ticker_result_from_dict(payload: dict[str, Any]) -> BenchmarkTickerResult:
         predicted_close=tuple(float(value) for value in payload["predicted_close"]),
         metrics={str(key): float(value) for key, value in payload["metrics"].items()},
         last_observed_close=float(payload["last_observed_close"]),
+        status=str(payload.get("status") or "completed"),
+    )
+
+
+def discarded_ticker_from_dict(payload: dict[str, Any]) -> BenchmarkDiscardedTicker:
+    return BenchmarkDiscardedTicker(
+        ticker=str(payload["ticker"]),
+        reason=DiscardReason(str(payload["reason"])),
+        detail=str(payload["detail"]) if payload.get("detail") is not None else None,
     )
 
 
@@ -138,6 +174,8 @@ def summary_from_dict(payload: dict[str, Any]) -> BenchmarkSummary:
         effective_universe=tuple(str(value) for value in payload["effective_universe"]),
         completed_tickers=tuple(str(value) for value in payload["completed_tickers"]),
         failed_tickers=tuple(str(value) for value in payload["failed_tickers"]),
+        discarded_tickers=tuple(discarded_ticker_from_dict(item) for item in payload.get("discarded_tickers", [])),
+        validation_state=ValidationState(str(payload["validation_state"])),
         metrics={str(key): float(value) for key, value in payload["metrics"].items()},
     )
 
@@ -162,6 +200,9 @@ def run_catalog_entry_from_dict(payload: dict[str, Any]) -> RunCatalogEntry:
         created_at=datetime.fromisoformat(payload["created_at"]),
         snapshot_id=str(payload["snapshot_id"]) if payload.get("snapshot_id") is not None else None,
         model_name=str(payload["model_name"]),
+        effective_universe=tuple(str(value) for value in payload.get("effective_universe", ())),
+        validation_state=ValidationState(str(payload.get("validation_state", ValidationState.LIVE_EXPLORATORY.value))),
+        discarded_count=int(payload.get("discarded_count", 0)),
         summary_metrics={str(key): float(value) for key, value in (payload.get("summary_metrics") or {}).items()},
     )
 

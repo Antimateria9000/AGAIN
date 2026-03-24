@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from again_benchmark.contracts import BenchmarkDefinition, BenchmarkSnapshotManifest, SplitPolicy
+from again_benchmark.contracts import (
+    BenchmarkDefinition,
+    BenchmarkSnapshotManifest,
+    SplitPolicy,
+    TimeNormalizationPolicy,
+)
 from again_benchmark.errors import BenchmarkValidationError
 
 REQUIRED_COLUMNS = ("Date", "Open", "High", "Low", "Close", "Volume", "Ticker")
@@ -38,6 +43,7 @@ def build_snapshot_manifest(
     created_at: datetime,
     as_of_timestamp: datetime,
     frame: pd.DataFrame,
+    source_adapter: str,
     data_path: Path,
     data_sha256: str,
 ) -> BenchmarkSnapshotManifest:
@@ -59,6 +65,9 @@ def build_snapshot_manifest(
         row_count=int(len(frame)),
         data_min_timestamp=pd.Timestamp(frame["Date"].min()).to_pydatetime(),
         data_max_timestamp=pd.Timestamp(frame["Date"].max()).to_pydatetime(),
+        expected_columns=tuple(str(column) for column in frame.columns),
+        time_normalization_policy=TimeNormalizationPolicy.NAIVE_UTC,
+        source_adapter=source_adapter,
         data_path=str(data_path),
         data_sha256=data_sha256,
     )

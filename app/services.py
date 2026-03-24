@@ -137,8 +137,17 @@ class BenchmarkService:
         mode: str | None = None,
         model_name: str | None = None,
         run_id: str | None = None,
+        validation_state: str | None = None,
+        effective_universe_contains: str | None = None,
     ):
-        return self.ui.list_runs(benchmark_id=benchmark_id, mode=mode, model_name=model_name, run_id=run_id)
+        return self.ui.list_runs(
+            benchmark_id=benchmark_id,
+            mode=mode,
+            model_name=model_name,
+            run_id=run_id,
+            validation_state=validation_state,
+            effective_universe_contains=effective_universe_contains,
+        )
 
     def load_run_view(self, run_id: str):
         return self.ui.load_run_view(run_id)

@@ -63,6 +63,20 @@ El repositorio incluye un modulo nuevo e independiente llamado `again_benchmark`
 
 El benchmark legacy basado en `app/benchmark_utils.py` se conserva solo como compatibilidad exploratoria. No debe confundirse con el flujo oficial reproducible.
 
+Garantias metodologicas actuales de `again_benchmark`:
+
+- las definiciones oficiales se persisten como artefactos versionables en `benchmarks/definitions/*.yaml`
+- cada snapshot oficial guarda parquet, checksum SHA-256 y `snapshot_manifest.json`
+- cada run oficial guarda `run_manifest.json`, `summary.json`, `metrics.parquet`, `ticker_results.parquet` y `plot_payload.json`, todos con checksums
+- el manifiesto de run persiste identidad de modelo, fingerprint de config, checksums de artefactos TFT disponibles, snapshot usado y estado de validacion
+- el resumen global solo usa tickers efectivamente completados; cualquier descarte queda auditado con razon explicita
+- el modo `live` queda marcado como exploratorio y no certificable; el modo `frozen` es el unico benchmark oficial reproducible
+
+Limitaciones explicitas de `again_benchmark`:
+
+- hoy implementa un corte reproducible comun por universo (`common_history_cutoff`); rolling-origin con anchors fijos queda preparado arquitectonicamente, pero no entra todavia en esta v1
+- el rerun exacto reproducible aplica al modo `frozen`; el modo `live` puede reutilizar la misma interfaz, pero no la misma garantia metodologica
+
 ## Requisitos
 
 - Python 3.11
