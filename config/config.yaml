@@ -75,7 +75,19 @@ training_universe:
 prediction:
   years: 3
   batch_size: 128
+  accelerator: auto
+  precision: auto
   future_dates_mode: approximate_business_days
+
+backtesting_runtime:
+  accelerator: auto
+  precision: auto
+  execution_backend: gpu_full
+  inference_backend: gpu_batched
+  allow_cpu_fallback_live: true
+  allow_cpu_fallback_frozen: false
+  parity_check_sample_windows: 0
+  emit_runtime_trace: true
 
 validation:
   debug: false

@@ -23,6 +23,16 @@ class DeviceUtilsTests(unittest.TestCase):
             "prediction": {
                 "batch_size": 32,
             },
+            "backtesting_runtime": {
+                "accelerator": "gpu",
+                "precision": "auto",
+                "execution_backend": "gpu_full",
+                "inference_backend": "gpu_batched",
+                "allow_cpu_fallback_live": True,
+                "allow_cpu_fallback_frozen": False,
+                "parity_check_sample_windows": 1,
+                "emit_runtime_trace": True,
+            },
         }
 
     @mock.patch("scripts.utils.device_utils._detect_nvidia_smi", return_value=(False, None))
@@ -90,6 +100,28 @@ class DeviceUtilsTests(unittest.TestCase):
         runtime = device_utils.resolve_execution_context(self._base_config(), purpose="train")
         self.assertEqual(runtime.accelerator, "gpu")
         self.assertEqual(runtime.precision, "32-true")
+
+    @mock.patch("scripts.utils.device_utils.detect_hardware_status")
+    @mock.patch("scripts.utils.device_utils._cuda_bf16_supported", return_value=True)
+    def test_backtesting_runtime_usa_su_seccion_especifica(self, _bf16_mock, detect_mock):
+        hardware = device_utils.HardwareStatus(
+            python_version="3.11.9",
+            torch_version="2.7.0+cu128",
+            torch_cuda_version="12.8",
+            cuda_available=True,
+            device_count=1,
+            gpu_names=("GPU mock",),
+            nvidia_smi_available=True,
+            nvidia_smi_path="nvidia-smi",
+            fallback_reason=None,
+        )
+        detect_mock.return_value = hardware
+        config = self._base_config()
+        config["training"]["accelerator"] = "cpu"
+        config["prediction"]["accelerator"] = "cpu"
+        runtime = device_utils.resolve_execution_context(config, purpose="backtest")
+        self.assertEqual(runtime.accelerator, "gpu")
+        self.assertEqual(runtime.device_string, "cuda:0")
 
 
 if __name__ == "__main__":

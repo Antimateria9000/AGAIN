@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -40,7 +40,7 @@ class BacktestUIAdapter:
         market_context: dict[str, Any],
         warnings: tuple[str, ...] = (),
     ) -> dict[str, Any]:
-        created_at = datetime.utcnow().replace(tzinfo=None)
+        created_at = datetime.now(UTC).replace(tzinfo=None)
         summary = build_summary_payload(
             result,
             created_at=created_at,

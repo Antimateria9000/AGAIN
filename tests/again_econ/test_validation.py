@@ -13,10 +13,12 @@ from again_econ.contracts import (
     ProviderDataKind,
     ProviderIdentity,
     ProviderWindowPayload,
+    ScheduledSignal,
     InputSourceKind,
     SignalRecord,
     TargetKind,
     WalkforwardWindow,
+    WindowClosePolicy,
     WindowProvenance,
 )
 from again_econ.errors import ContractValidationError, TemporalIntegrityError
@@ -26,6 +28,7 @@ from again_econ.validation import (
     validate_market_frame,
     validate_provider_window_payload,
     validate_record_matches_window,
+    validate_scheduled_signals,
     validate_signals,
 )
 from tests.helpers.again_econ import aware_utc_datetime
@@ -141,6 +144,58 @@ def test_validate_signals_rejects_duplicate_records():
 
     with pytest.raises(ContractValidationError):
         validate_signals(signals)
+
+
+def test_validate_scheduled_signals_rejects_execution_at_available_at():
+    signal = SignalRecord(
+        instrument_id="AAA",
+        decision_timestamp=datetime(2024, 1, 1),
+        available_at=datetime(2024, 1, 2),
+        target_state=PositionTarget.LONG,
+    )
+
+    with pytest.raises(TemporalIntegrityError):
+        validate_scheduled_signals(
+            (
+                ScheduledSignal(
+                    signal=signal,
+                    execution_timestamp=datetime(2024, 1, 2),
+                ),
+            )
+        )
+
+
+def test_validate_record_matches_window_rejects_execution_lag_mismatch():
+    window = WalkforwardWindow(
+        index=0,
+        train_start=datetime(2024, 1, 1),
+        train_end=datetime(2024, 1, 2),
+        test_start=datetime(2024, 1, 3),
+        test_end=datetime(2024, 1, 5),
+        lookahead_bars=2,
+        execution_lag_bars=1,
+        close_policy=WindowClosePolicy.ADMINISTRATIVE_CLOSE_ON_LAST_BAR,
+    )
+    record = ForecastRecord(
+        instrument_id="AAA",
+        decision_timestamp=datetime(2024, 1, 4),
+        available_at=datetime(2024, 1, 4),
+        target_kind=TargetKind.RETURN,
+        value=0.02,
+        provenance=WindowProvenance(
+            window_index=0,
+            train_start=datetime(2024, 1, 1),
+            train_end=datetime(2024, 1, 2),
+            test_start=datetime(2024, 1, 3),
+            test_end=datetime(2024, 1, 5),
+            lookahead_bars=2,
+            execution_lag_bars=2,
+            close_policy=WindowClosePolicy.ADMINISTRATIVE_CLOSE_ON_LAST_BAR,
+        ),
+    )
+
+    with pytest.raises(TemporalIntegrityError):
+        validate_record_matches_window(record, window)
 
 
 def test_validate_provider_window_payload_rejects_window_mismatch():

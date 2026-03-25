@@ -245,9 +245,10 @@ def load_data_and_model(
     trim_days=0,
     years=3,
     raw_data: pd.DataFrame | None = None,
+    runtime_purpose: str = "predict",
 ):
     start_time = time.time()
-    runtime = resolve_execution_context(config, purpose="predict")
+    runtime = resolve_execution_context(config, purpose=runtime_purpose)
     device = runtime.torch_device
     log_runtime_context(logger, "Carga de inferencia", runtime)
     config_path = config.get("_meta", {}).get("config_path")
@@ -372,14 +373,42 @@ def _predict_quantiles_from_processed_frame(
     return pred_array
 
 
+def _build_batched_group_id(ticker: str, batch_index: int) -> str:
+    return f"{ticker}__backtest_batch_{batch_index:06d}"
+
+
+def _predict_quantiles_from_processed_frames(
+    config: dict,
+    dataset: TimeSeriesDataSet,
+    model,
+    processed_frames: list[pd.DataFrame],
+    runtime,
+    context: str,
+    prediction_length: int | None = None,
+) -> np.ndarray:
+    if not processed_frames:
+        raise ValueError("Se requiere al menos un dataframe procesado para inferencia batched")
+    combined = pd.concat(processed_frames, ignore_index=True)
+    return _predict_quantiles_from_processed_frame(
+        config,
+        dataset,
+        model,
+        combined,
+        runtime,
+        context,
+        prediction_length=prediction_length,
+    )
+
+
 def _generate_legacy_dataset_predictions(
     config: dict,
     dataset: TimeSeriesDataSet,
     model,
     ticker_data: pd.DataFrame,
     return_details: bool = False,
+    runtime=None,
 ):
-    runtime = resolve_execution_context(config, purpose="predict")
+    runtime = runtime or resolve_execution_context(config, purpose="predict")
     pred_array = _predict_quantiles_from_processed_frame(
         config,
         dataset,
@@ -432,11 +461,13 @@ def generate_recursive_forecast(
     ticker_data: pd.DataFrame,
     raw_ticker_data: pd.DataFrame,
     return_details: bool = False,
+    runtime=None,
+    horizon: int | None = None,
 ):
-    runtime = resolve_execution_context(config, purpose="predict")
+    runtime = runtime or resolve_execution_context(config, purpose="predict")
     config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
     normalizers = config_manager.load_normalizers(config["model_name"], required=True)
-    horizon = int(config["model"]["max_prediction_length"])
+    horizon = int(horizon if horizon is not None else config["model"]["max_prediction_length"])
     ticker = str(ticker_data["Ticker"].iloc[-1]) if "Ticker" in ticker_data.columns else str(raw_ticker_data["Ticker"].iloc[-1])
 
     working_history = _normalize_raw_history_frame(raw_ticker_data, ticker)
@@ -545,6 +576,136 @@ def generate_recursive_forecast(
     return forecast_close_median_np, forecast_close_lower_np, forecast_close_upper_np
 
 
+def generate_recursive_forecasts_batch(
+    config: dict,
+    dataset: TimeSeriesDataSet,
+    model,
+    raw_histories: list[pd.DataFrame],
+    *,
+    ticker: str,
+    horizon: int,
+    runtime=None,
+) -> tuple[dict[str, object], ...]:
+    if not raw_histories:
+        return ()
+
+    runtime = runtime or resolve_execution_context(config, purpose="predict")
+    config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
+    normalizers = config_manager.load_normalizers(config["model_name"], required=True)
+    working_histories = [_normalize_raw_history_frame(raw_history, ticker) for raw_history in raw_histories]
+    states: list[dict[str, object]] = []
+    for history in working_histories:
+        states.append(
+            {
+                "last_observed_date": pd.Timestamp(history["Date"].iloc[-1]).to_pydatetime(),
+                "last_observed_close": float(history["Close"].iloc[-1]),
+                "forecast_dates": [],
+                "relative_returns_lower": [],
+                "relative_returns_median": [],
+                "relative_returns_upper": [],
+                "forecast_close_median": [],
+                "forecast_close_lower": [],
+                "forecast_close_upper": [],
+            }
+        )
+
+    for step_index in range(int(horizon)):
+        processed_frames: list[pd.DataFrame] = []
+        next_dates: list[pd.Timestamp] = []
+        for batch_index, history in enumerate(working_histories):
+            placeholder_history, next_date = _build_next_step_input(history)
+            processed_df = _recompute_future_features(config, placeholder_history, ticker, normalizers)
+            processed_last_date = pd.Timestamp(processed_df["Date"].iloc[-1]).tz_localize(None)
+            expected_next_date = pd.Timestamp(next_date).tz_localize(None)
+            if processed_last_date != expected_next_date:
+                raise ValueError(
+                    f"La ultima fila procesada ({processed_last_date}) no coincide con la fecha futura esperada ({expected_next_date})"
+                )
+            batch_df = processed_df.copy()
+            batch_df["group_id"] = _build_batched_group_id(ticker, batch_index)
+            batch_df["time_idx"] = batch_df.groupby("group_id").cumcount()
+            processed_frames.append(batch_df)
+            next_dates.append(expected_next_date)
+
+        pred_array = _predict_quantiles_from_processed_frames(
+            config,
+            dataset,
+            model,
+            processed_frames,
+            runtime,
+            context=f"Inferencia TFT recursiva batched paso {step_index + 1}/{horizon} | ticker={ticker} | batch={len(processed_frames)}",
+            prediction_length=1,
+        )
+        if pred_array.shape[0] != len(working_histories) or pred_array.shape[1] != 1:
+            raise ValueError(
+                f"El forecast recursivo batched esperaba forma ({len(working_histories)}, 1, 3) y obtuvo {pred_array.shape}"
+            )
+
+        for batch_index, history in enumerate(working_histories):
+            state = states[batch_index]
+            step_lower, step_median, step_upper = _sanitize_quantile_order(
+                pred_array[batch_index, 0, 0],
+                pred_array[batch_index, 0, 1],
+                pred_array[batch_index, 0, 2],
+                context=f"Batch {batch_index + 1}/{len(working_histories)} paso {step_index + 1}/{horizon}",
+            )
+            current_last_close = float(history["Close"].iloc[-1])
+            next_median_path, next_lower_path, next_upper_path = accumulate_quantile_price_paths(
+                current_last_close,
+                np.asarray([step_median], dtype=float),
+                np.asarray([step_lower], dtype=float),
+                np.asarray([step_upper], dtype=float),
+            )
+            cast_state = state
+            cast_state["forecast_dates"].append(pd.Timestamp(next_dates[batch_index]).to_pydatetime())
+            cast_state["relative_returns_lower"].append(step_lower)
+            cast_state["relative_returns_median"].append(step_median)
+            cast_state["relative_returns_upper"].append(step_upper)
+            cast_state["forecast_close_median"].append(float(next_median_path[-1]))
+            cast_state["forecast_close_lower"].append(float(next_lower_path[-1]))
+            cast_state["forecast_close_upper"].append(float(next_upper_path[-1]))
+            working_histories[batch_index] = _append_predicted_step(
+                history,
+                next_dates[batch_index],
+                float(next_median_path[-1]),
+            )
+
+    results: list[dict[str, object]] = []
+    for state in states:
+        forecast_close_median_np = np.asarray(state["forecast_close_median"], dtype=float)
+        forecast_close_lower_np = np.asarray(state["forecast_close_lower"], dtype=float)
+        forecast_close_upper_np = np.asarray(state["forecast_close_upper"], dtype=float)
+        relative_returns_lower_np = np.asarray(state["relative_returns_lower"], dtype=float)
+        relative_returns_median_np = np.asarray(state["relative_returns_median"], dtype=float)
+        relative_returns_upper_np = np.asarray(state["relative_returns_upper"], dtype=float)
+        _validate_forecast_timeline(state["last_observed_date"], state["forecast_dates"], int(horizon))
+        _validate_forecast_arrays(
+            forecast_close_median_np,
+            forecast_close_lower_np,
+            forecast_close_upper_np,
+            int(horizon),
+        )
+        results.append(
+            {
+                "forecast_mode": "recursive_one_step",
+                "forecast_dates": list(state["forecast_dates"]),
+                "relative_returns_lower": relative_returns_lower_np,
+                "relative_returns_median": relative_returns_median_np,
+                "relative_returns_upper": relative_returns_upper_np,
+                "predicted_returns_lower": relative_returns_lower_np,
+                "predicted_returns_median": relative_returns_median_np,
+                "predicted_returns_upper": relative_returns_upper_np,
+                "forecast_close_median": forecast_close_median_np,
+                "forecast_close_lower": forecast_close_lower_np,
+                "forecast_close_upper": forecast_close_upper_np,
+                "last_observed_date": state["last_observed_date"],
+                "last_observed_close": float(state["last_observed_close"]),
+                "last_close_denorm": float(state["last_observed_close"]),
+            }
+        )
+    return tuple(results)
+
+
 def generate_predictions(
     config,
     dataset,
@@ -553,9 +714,12 @@ def generate_predictions(
     return_details: bool = False,
     raw_ticker_data: pd.DataFrame | None = None,
     forecast_mode: str = "recursive_one_step",
+    runtime=None,
+    runtime_purpose: str = "predict",
+    forecast_horizon: int | None = None,
 ):
     start_time = time.time()
-    runtime = resolve_execution_context(config, purpose="predict")
+    runtime = runtime or resolve_execution_context(config, purpose=runtime_purpose)
     model = model.to(runtime.torch_device)
 
     if forecast_mode == "recursive_one_step":
@@ -563,7 +727,14 @@ def generate_predictions(
             logger.warning(
                 "Se solicito forecast recursivo pero no se proporciono raw_ticker_data. Se usara el modo legacy de compatibilidad."
             )
-            result = _generate_legacy_dataset_predictions(config, dataset, model, ticker_data, return_details=return_details)
+            result = _generate_legacy_dataset_predictions(
+                config,
+                dataset,
+                model,
+                ticker_data,
+                return_details=return_details,
+                runtime=runtime,
+            )
         else:
             result = generate_recursive_forecast(
                 config,
@@ -572,10 +743,19 @@ def generate_predictions(
                 ticker_data,
                 raw_ticker_data=raw_ticker_data,
                 return_details=return_details,
+                runtime=runtime,
+                horizon=forecast_horizon,
             )
     elif forecast_mode == "legacy_dataset_predict":
         logger.warning("Se esta usando el modo legacy_dataset_predict. Solo deberia usarse para depuracion o compatibilidad.")
-        result = _generate_legacy_dataset_predictions(config, dataset, model, ticker_data, return_details=return_details)
+        result = _generate_legacy_dataset_predictions(
+            config,
+            dataset,
+            model,
+            ticker_data,
+            return_details=return_details,
+            runtime=runtime,
+        )
     else:
         raise ValueError(f"Modo de forecast no soportado: {forecast_mode}")
 

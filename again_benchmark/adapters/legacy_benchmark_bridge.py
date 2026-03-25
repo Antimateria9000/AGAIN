@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from again_benchmark.adapters.legacy_history import load_benchmark_history
+
+
 def load_legacy_benchmark_rows(config: dict) -> dict:
-    from app.benchmark_utils import load_benchmark_history
     from app.config_loader import load_benchmark_tickers
 
     benchmark_tickers = load_benchmark_tickers(config)

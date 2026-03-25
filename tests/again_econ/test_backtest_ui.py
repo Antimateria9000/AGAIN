@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from again_econ.storage import BacktestStorage
 from again_econ.ui_adapter import BacktestUIAdapter
 from tests.helpers.again_econ_ui import build_result
@@ -25,6 +27,7 @@ def test_backtest_ui_adapter_persists_lists_and_loads_runs(tmp_path):
 
     assert (storage.run_dir(result.manifest.run_id) / "run_manifest.json").exists()
     assert run_view["summary"]["run_id"] == result.manifest.run_id
+    assert datetime.fromisoformat(run_view["summary"]["created_at"]).tzinfo is None
     assert not run_view["oos_curve"].empty
     rows = ui.list_runs()
     assert len(rows) == 1

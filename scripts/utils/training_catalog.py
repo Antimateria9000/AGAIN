@@ -56,6 +56,25 @@ def save_training_catalog(config: dict, catalog: dict[str, Any]) -> Path:
     return path
 
 
+def _copy_tree(source: Path | None, target: Path, copies: list[tuple[Path, Path]]) -> None:
+    if source is None or not source.exists():
+        return
+    if source.resolve() == target.resolve():
+        return
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    copies.append((source, target))
+
+
+def _copy_file(source: Path | None, target: Path, copies: list[tuple[Path, Path]]) -> None:
+    if source is None or not source.exists():
+        return
+    if source.resolve() == target.resolve():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    copies.append((source, target))
+
+
 def build_training_run_manifest(config: dict, *, profile_path: str | None) -> dict[str, Any]:
     layout = build_training_profile_layout(config, config["model_name"])
     run_id = str(config.get("training_run", {}).get("run_id") or "")
@@ -114,21 +133,15 @@ def snapshot_training_run_artifacts(config: dict, *, profile_path: str | None) -
         for child_name in ("dataset", "market", "checkpoints", "normalizers", "reports"):
             source_dir = active_root / child_name
             target_dir = run_root / child_name
-            if source_dir.exists():
-                shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
-                copies.append((source_dir, target_dir))
+            _copy_tree(source_dir, target_dir, copies)
 
     optuna_value = config["paths"].get("optuna_dir")
     optuna_dir = resolve_repo_path(config, optuna_value) if optuna_value else None
-    if optuna_dir and optuna_dir.exists():
-        shutil.copytree(optuna_dir, run_root / "optuna", dirs_exist_ok=True)
-        copies.append((optuna_dir, run_root / "optuna"))
+    _copy_tree(optuna_dir, run_root / "optuna", copies)
 
     if profile_path:
         source_profile = Path(profile_path)
-        if source_profile.exists():
-            shutil.copy2(source_profile, run_root / "runtime_profile.yaml")
-            copies.append((source_profile, run_root / "runtime_profile.yaml"))
+        _copy_file(source_profile, run_root / "runtime_profile.yaml", copies)
 
     manifest["snapshotted_paths"] = [{"source": str(source), "target": str(target)} for source, target in copies]
     (run_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

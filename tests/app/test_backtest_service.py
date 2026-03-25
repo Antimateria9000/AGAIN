@@ -85,6 +85,7 @@ class FakeProvider:
 
     def __init__(self, **kwargs):
         type(self).last_kwargs = kwargs
+        self.runtime_trace = {"execution_backend": "gpu_full", "inference_backend": "gpu_batched"}
 
 
 def test_backtest_service_resolves_frozen_mode_and_passes_clean_contracts(monkeypatch):
@@ -123,6 +124,7 @@ def test_backtest_service_resolves_frozen_mode_and_passes_clean_contracts(monkey
     assert FakeProvider.last_kwargs["provider_mode"] == "official_frozen"
     assert FakeProvider.last_kwargs["methodology_label"] == "frozen_global_model_replay"
     assert response["summary"]["preset_name"] == "strict_frozen"
+    assert response["summary"]["market_context"]["runtime_trace"]["execution_backend"] == "gpu_full"
 
 
 def test_backtest_service_exposes_mode_defaults(monkeypatch):

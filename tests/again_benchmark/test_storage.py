@@ -42,9 +42,12 @@ def test_manifest_serialization_and_deserialization_roundtrip(tmp_path):
     storage.write_definition(definition)
 
     loaded = storage.load_definition(definition.definition_id)
+    catalog = storage.list_definitions()
 
     assert loaded == definition
     assert storage.definition_path(definition.definition_id).suffix == ".yaml"
+    assert len(catalog) == 1
+    assert catalog[0].updated_at.tzinfo is None
 
 
 def test_manifest_corrupt_run_json_fails_to_load(tmp_path):

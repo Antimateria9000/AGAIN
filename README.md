@@ -120,7 +120,6 @@ python -m pip install -e .
 El archivo `requirements.txt` fija un entorno de referencia para CPU. Si vas a usar CUDA, sustituye la instalacion de `torch` por la variante oficial compatible con tu hardware. Para este proyecto se ha dejado preparado:
 
 - `requirements-torch-cu128.txt`
-- `instalar_torch_cuda.bat`
 
 El proyecto detecta automaticamente CUDA y hace fallback limpio a CPU si no esta disponible.
 

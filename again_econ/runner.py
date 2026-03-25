@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from again_econ.adapters.again_bundle import AgainBundleAdapter
@@ -19,9 +20,12 @@ from again_econ.contracts import (
 )
 from again_econ.errors import ContractValidationError, TemporalIntegrityError
 from again_econ.execution import SignalScheduler, run_window_execution
+from again_econ.gpu.execution import run_window_execution_tensor, schedule_window_signals_tensor
+from again_econ.gpu.metrics import summarize_global_oos_metrics_tensor, summarize_metrics_tensor
 from again_econ.fingerprints import fingerprint_payload
 from again_econ.manifest import build_run_manifest
 from again_econ.metrics import compute_window_average_metrics, summarize_global_oos_metrics, summarize_metrics
+from again_econ.parity import compare_execution_results, compare_metric_bundles, compare_scheduling_outputs
 from again_econ.providers import (
     ForecastProvider,
     SignalProvider,
@@ -29,6 +33,7 @@ from again_econ.providers import (
     StaticSignalProvider,
     provider_from_bundle,
 )
+from again_econ.runtime import BacktestRuntimeProfile
 from again_econ.signals import translate_forecasts_to_signals
 from again_econ.validation import (
     validate_forecasts,
@@ -38,6 +43,8 @@ from again_econ.validation import (
     validate_signals,
 )
 from again_econ.walkforward import build_walkforward_windows, slice_test_market
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_direct_provider(
@@ -77,7 +84,7 @@ def _resolve_direct_provider(
     )
 
 
-def _schedule_window_signals(signals: tuple[SignalRecord, ...], market_frame: MarketFrame, window):
+def _schedule_window_signals_cpu(signals: tuple[SignalRecord, ...], market_frame: MarketFrame, window):
     scheduler = SignalScheduler(market_frame, execution_lag_bars=window.execution_lag_bars)
     scheduled = []
     discarded = []
@@ -111,6 +118,58 @@ def _schedule_window_signals(signals: tuple[SignalRecord, ...], market_frame: Ma
             continue
         scheduled.append(scheduled_signal)
     return tuple(scheduled), tuple(discarded)
+
+
+def _resolve_provider_runtime_profile(provider) -> BacktestRuntimeProfile | None:
+    runtime_profile = getattr(provider, "runtime_profile", None)
+    return runtime_profile if isinstance(runtime_profile, BacktestRuntimeProfile) else None
+
+
+def _run_execution_parity_check(
+    *,
+    window,
+    market_frame: MarketFrame,
+    translated_signals: tuple[SignalRecord, ...],
+    gpu_scheduled,
+    gpu_discarded,
+    gpu_execution_result,
+    gpu_metrics,
+    config: BacktestConfig,
+) -> None:
+    cpu_scheduled, cpu_discarded = _schedule_window_signals_cpu(translated_signals, market_frame, window)
+    scheduling_mismatches = compare_scheduling_outputs(cpu_scheduled, gpu_scheduled, cpu_discarded, gpu_discarded)
+    if scheduling_mismatches:
+        raise RuntimeError(
+            f"Paridad CPU/GPU rota en scheduling para la ventana {window.index}: {', '.join(scheduling_mismatches[:10])}"
+        )
+
+    test_market = slice_test_market(market_frame, window)
+    cpu_execution_result = run_window_execution(
+        test_market,
+        cpu_scheduled,
+        config.execution,
+        window_index=window.index,
+        close_policy=window.close_policy,
+    )
+    execution_mismatches = compare_execution_results(cpu_execution_result, gpu_execution_result)
+    if execution_mismatches:
+        raise RuntimeError(
+            f"Paridad CPU/GPU rota en ejecucion para la ventana {window.index}: {', '.join(execution_mismatches[:10])}"
+        )
+
+    cpu_winning_trades = sum(1 for trade in cpu_execution_result.trades if trade.net_pnl > 0.0)
+    cpu_metrics = summarize_metrics(
+        cpu_execution_result.snapshots,
+        initial_equity=config.execution.initial_cash,
+        trade_count=len(cpu_execution_result.trades),
+        winning_trades=cpu_winning_trades,
+        bars_per_year=config.execution.bars_per_year,
+    )
+    metric_mismatches = compare_metric_bundles(cpu_metrics, gpu_metrics)
+    if metric_mismatches:
+        raise RuntimeError(
+            f"Paridad CPU/GPU rota en metricas para la ventana {window.index}: {', '.join(metric_mismatches[:10])}"
+        )
 
 
 def _build_window_manifest(window, payload, translated_signals, scheduled_signals, execution_result, discarded_signals) -> WindowManifest:
@@ -157,6 +216,14 @@ def run_backtest_with_provider(
 ) -> BacktestResult:
     validate_market_frame(market_frame)
     windows = build_walkforward_windows(market_frame, config.walkforward)
+    runtime_profile = _resolve_provider_runtime_profile(provider)
+    parity_windows_remaining = (
+        runtime_profile.parity_check_sample_windows
+        if runtime_profile is not None and runtime_profile.uses_gpu_execution
+        else 0
+    )
+    if runtime_profile is not None and runtime_profile.emit_runtime_trace:
+        logger.info("Backtesting runtime trace | %s", runtime_profile.to_trace_payload())
 
     window_results = []
     window_manifests = []
@@ -176,23 +243,65 @@ def run_backtest_with_provider(
         else:
             translated_signals = payload.signals
         validate_signals(translated_signals)
-        scheduled_signals, discarded_signals = _schedule_window_signals(translated_signals, market_frame, window)
+        if runtime_profile is not None and runtime_profile.uses_gpu_execution:
+            scheduled_signals, discarded_signals, scheduler_trace = schedule_window_signals_tensor(
+                translated_signals,
+                market_frame,
+                window,
+                device=runtime_profile.execution_context.torch_device,
+            )
+            if runtime_profile.emit_runtime_trace:
+                logger.info("Backtesting scheduler trace | window=%s | %s", window.index, scheduler_trace)
+        else:
+            scheduled_signals, discarded_signals = _schedule_window_signals_cpu(translated_signals, market_frame, window)
         test_market = slice_test_market(market_frame, window)
-        execution_result = run_window_execution(
-            test_market,
-            scheduled_signals,
-            config.execution,
-            window_index=window.index,
-            close_policy=window.close_policy,
-        )
+        if runtime_profile is not None and runtime_profile.uses_gpu_execution:
+            execution_result = run_window_execution_tensor(
+                test_market,
+                scheduled_signals,
+                config.execution,
+                window_index=window.index,
+                close_policy=window.close_policy,
+                device=runtime_profile.execution_context.torch_device,
+            )
+        else:
+            execution_result = run_window_execution(
+                test_market,
+                scheduled_signals,
+                config.execution,
+                window_index=window.index,
+                close_policy=window.close_policy,
+            )
         winning_trades = sum(1 for trade in execution_result.trades if trade.net_pnl > 0.0)
-        metrics = summarize_metrics(
-            execution_result.snapshots,
-            initial_equity=config.execution.initial_cash,
-            trade_count=len(execution_result.trades),
-            winning_trades=winning_trades,
-            bars_per_year=config.execution.bars_per_year,
-        )
+        if runtime_profile is not None and runtime_profile.uses_gpu_execution:
+            metrics = summarize_metrics_tensor(
+                execution_result.snapshots,
+                initial_equity=config.execution.initial_cash,
+                trade_count=len(execution_result.trades),
+                winning_trades=winning_trades,
+                bars_per_year=config.execution.bars_per_year,
+                device=runtime_profile.execution_context.torch_device,
+            )
+        else:
+            metrics = summarize_metrics(
+                execution_result.snapshots,
+                initial_equity=config.execution.initial_cash,
+                trade_count=len(execution_result.trades),
+                winning_trades=winning_trades,
+                bars_per_year=config.execution.bars_per_year,
+            )
+        if parity_windows_remaining > 0:
+            _run_execution_parity_check(
+                window=window,
+                market_frame=market_frame,
+                translated_signals=translated_signals,
+                gpu_scheduled=scheduled_signals,
+                gpu_discarded=discarded_signals,
+                gpu_execution_result=execution_result,
+                gpu_metrics=metrics,
+                config=config,
+            )
+            parity_windows_remaining -= 1
         window_manifest = _build_window_manifest(
             window,
             payload,
@@ -222,11 +331,21 @@ def run_backtest_with_provider(
             artifact_references.extend(payload.artifact_references)
 
     window_results_tuple = tuple(window_results)
-    oos_curve, summary_metrics = summarize_global_oos_metrics(
-        window_results_tuple,
-        initial_equity=config.execution.initial_cash,
-        bars_per_year=config.execution.bars_per_year,
-    )
+    if runtime_profile is not None and runtime_profile.uses_gpu_execution:
+        oos_curve, summary_metrics = summarize_global_oos_metrics_tensor(
+            window_results_tuple,
+            initial_equity=config.execution.initial_cash,
+            bars_per_year=config.execution.bars_per_year,
+            device=runtime_profile.execution_context.torch_device,
+        )
+    else:
+        oos_curve, summary_metrics = summarize_global_oos_metrics(
+            window_results_tuple,
+            initial_equity=config.execution.initial_cash,
+            bars_per_year=config.execution.bars_per_year,
+        )
+    if runtime_profile is not None and runtime_profile.emit_runtime_trace:
+        artifact_references.append(runtime_profile.to_artifact_reference())
     manifest = build_run_manifest(
         config=config,
         market_frame=market_frame,

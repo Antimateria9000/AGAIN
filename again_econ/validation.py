@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import defaultdict
 from typing import Iterable
@@ -32,9 +32,22 @@ def validate_market_frame(market_frame: MarketFrame) -> None:
                 )
 
 
+def _validate_record_temporal_semantics(record: ForecastRecord | SignalRecord) -> None:
+    if record.observed_at > record.decision_timestamp:
+        raise TemporalIntegrityError("observed_at no puede ser posterior a decision_timestamp")
+    if record.available_at < record.observed_at:
+        raise TemporalIntegrityError("available_at no puede ser anterior a observed_at")
+
+
 def validate_window_provenance(provenance: WindowProvenance) -> None:
+    if provenance.train_start is not None and provenance.train_start > provenance.train_end:
+        raise TemporalIntegrityError("WindowProvenance invalida: train_start no puede ser posterior a train_end")
     if not (provenance.train_end < provenance.test_start <= provenance.test_end):
         raise TemporalIntegrityError("WindowProvenance invalida: train_end < test_start <= test_end es obligatorio")
+    if provenance.lookahead_bars <= 0:
+        raise TemporalIntegrityError("WindowProvenance.lookahead_bars debe ser > 0")
+    if provenance.execution_lag_bars <= 0:
+        raise TemporalIntegrityError("WindowProvenance.execution_lag_bars debe ser > 0")
 
 
 def validate_forecasts(forecasts: Iterable[ForecastRecord]) -> None:
@@ -44,8 +57,7 @@ def validate_forecasts(forecasts: Iterable[ForecastRecord]) -> None:
         if key in seen:
             raise ContractValidationError("No puede haber dos forecasts para el mismo instrumento y decision_timestamp")
         seen.add(key)
-        if record.available_at > record.decision_timestamp:
-            raise TemporalIntegrityError("available_at no puede ser posterior a decision_timestamp")
+        _validate_record_temporal_semantics(record)
         if record.reference_value is not None and record.reference_value <= 0.0:
             raise ContractValidationError("reference_value debe ser > 0 cuando existe")
         if record.provenance is not None:
@@ -59,8 +71,7 @@ def validate_signals(signals: Iterable[SignalRecord]) -> None:
         if key in seen:
             raise ContractValidationError("No puede haber dos signals para el mismo instrumento y decision_timestamp")
         seen.add(key)
-        if record.available_at > record.decision_timestamp:
-            raise TemporalIntegrityError("available_at no puede ser posterior a decision_timestamp")
+        _validate_record_temporal_semantics(record)
         if record.provenance is not None:
             validate_window_provenance(record.provenance)
 
@@ -96,106 +107,12 @@ def validate_walkforward_windows(windows: Iterable[WalkforwardWindow]) -> None:
             raise TemporalIntegrityError("Cada ventana walk-forward debe cumplir train_end < test_start <= test_end")
         if previous_test_end is not None and window.test_start <= previous_test_end:
             raise TemporalIntegrityError("Las ventanas de test no deben solaparse")
-        previous_test_end = window.test_end
-
-
-def validate_scheduled_signals(scheduled_signals: Iterable[ScheduledSignal]) -> None:
-    seen: set[tuple[str, object]] = set()
-    for scheduled in scheduled_signals:
-        key = (scheduled.signal.instrument_id, scheduled.execution_timestamp)
-        if key in seen:
-            raise TemporalIntegrityError(
-                "No puede haber dos señales programadas para el mismo instrumento y execution_timestamp"
-            )
-        seen.add(key)
-        if scheduled.execution_timestamp <= scheduled.signal.decision_timestamp:
-            raise TemporalIntegrityError("La ejecucion debe ocurrir estrictamente despues de la decision")
-
-
-def validate_record_matches_window(record: ForecastRecord | SignalRecord, window: WalkforwardWindow) -> None:
-    provenance = record.provenance
-    if provenance is None:
-        if not (window.test_start <= record.decision_timestamp <= window.test_end):
-            raise TemporalIntegrityError("El record no cae en el rango temporal permitido de la ventana")
-        return
-    if provenance.window_index != window.index:
-        raise TemporalIntegrityError("window_index del record no coincide con la ventana walk-forward")
-    if provenance.train_end != window.train_end or provenance.test_start != window.test_start or provenance.test_end != window.test_end:
-        raise TemporalIntegrityError("La provenance temporal del record no coincide con la ventana activa")
-    if not (window.test_start <= record.decision_timestamp <= window.test_end):
-        raise TemporalIntegrityError("El decision_timestamp del record no es coherente con su provenance")
-
-
-def ensure_market_timestamp_exists(market_frame: MarketFrame, instrument_id: str, timestamp) -> None:
-    if market_frame.bar_for(instrument_id, timestamp) is None:
-        raise ContractValidationError(f"No existe barra para {instrument_id} en {timestamp!s}")
-
-
-def _validate_record_temporal_semantics(record: ForecastRecord | SignalRecord) -> None:
-    if record.observed_at > record.decision_timestamp:
-        raise TemporalIntegrityError("observed_at no puede ser posterior a decision_timestamp")
-    if record.available_at < record.observed_at:
-        raise TemporalIntegrityError("available_at no puede ser anterior a observed_at")
-
-
-def validate_window_provenance(provenance: WindowProvenance) -> None:  # type: ignore[no-redef]
-    if provenance.train_start is not None and provenance.train_start > provenance.train_end:
-        raise TemporalIntegrityError("WindowProvenance invalida: train_start no puede ser posterior a train_end")
-    if not (provenance.train_end < provenance.test_start <= provenance.test_end):
-        raise TemporalIntegrityError("WindowProvenance invalida: train_end < test_start <= test_end es obligatorio")
-    if provenance.lookahead_bars <= 0:
-        raise TemporalIntegrityError("WindowProvenance.lookahead_bars debe ser > 0")
-    if provenance.execution_lag_bars <= 0:
-        raise TemporalIntegrityError("WindowProvenance.execution_lag_bars debe ser > 0")
-
-
-def validate_forecasts(forecasts: Iterable[ForecastRecord]) -> None:  # type: ignore[no-redef]
-    seen: set[tuple[str, object]] = set()
-    for record in forecasts:
-        key = (record.instrument_id, record.decision_timestamp)
-        if key in seen:
-            raise ContractValidationError("No puede haber dos forecasts para el mismo instrumento y decision_timestamp")
-        seen.add(key)
-        _validate_record_temporal_semantics(record)
-        if record.reference_value is not None and record.reference_value <= 0.0:
-            raise ContractValidationError("reference_value debe ser > 0 cuando existe")
-        if record.provenance is not None:
-            validate_window_provenance(record.provenance)
-
-
-def validate_signals(signals: Iterable[SignalRecord]) -> None:  # type: ignore[no-redef]
-    seen: set[tuple[str, object]] = set()
-    for record in signals:
-        key = (record.instrument_id, record.decision_timestamp)
-        if key in seen:
-            raise ContractValidationError("No puede haber dos signals para el mismo instrumento y decision_timestamp")
-        seen.add(key)
-        _validate_record_temporal_semantics(record)
-        if record.provenance is not None:
-            validate_window_provenance(record.provenance)
-
-
-def validate_provider_window_payload(payload: ProviderWindowPayload, window: WalkforwardWindow) -> None:
-    if payload.window_index != window.index:
-        raise TemporalIntegrityError("El payload del provider no coincide con la window solicitada")
-    for record in payload.forecasts or payload.signals:
-        validate_record_matches_window(record, window)
-
-
-def validate_walkforward_windows(windows: Iterable[WalkforwardWindow]) -> None:  # type: ignore[no-redef]
-    ordered = sorted(windows, key=lambda item: item.index)
-    previous_test_end = None
-    for window in ordered:
-        if not (window.train_start <= window.train_end < window.test_start <= window.test_end):
-            raise TemporalIntegrityError("Cada ventana walk-forward debe cumplir train_end < test_start <= test_end")
-        if previous_test_end is not None and window.test_start <= previous_test_end:
-            raise TemporalIntegrityError("Las ventanas de test no deben solaparse")
         if window.lookahead_bars <= 0 or window.execution_lag_bars <= 0:
             raise TemporalIntegrityError("Las ventanas deben declarar lookahead_bars y execution_lag_bars validos")
         previous_test_end = window.test_end
 
 
-def validate_scheduled_signals(scheduled_signals: Iterable[ScheduledSignal]) -> None:  # type: ignore[no-redef]
+def validate_scheduled_signals(scheduled_signals: Iterable[ScheduledSignal]) -> None:
     seen: set[tuple[str, object]] = set()
     for scheduled in scheduled_signals:
         key = (scheduled.signal.instrument_id, scheduled.execution_timestamp)
@@ -209,7 +126,7 @@ def validate_scheduled_signals(scheduled_signals: Iterable[ScheduledSignal]) -> 
             raise TemporalIntegrityError("La ejecucion debe ocurrir estrictamente despues del timestamp operativo")
 
 
-def validate_record_matches_window(record: ForecastRecord | SignalRecord, window: WalkforwardWindow) -> None:  # type: ignore[no-redef]
+def validate_record_matches_window(record: ForecastRecord | SignalRecord, window: WalkforwardWindow) -> None:
     provenance = record.provenance
     if provenance is None:
         if not (window.test_start <= record.decision_timestamp <= window.test_end):
@@ -229,6 +146,18 @@ def validate_record_matches_window(record: ForecastRecord | SignalRecord, window
         raise TemporalIntegrityError("close_policy del record no coincide con la ventana activa")
     if not (window.test_start <= record.decision_timestamp <= window.test_end):
         raise TemporalIntegrityError("El decision_timestamp del record no es coherente con su provenance")
+
+
+def validate_provider_window_payload(payload: ProviderWindowPayload, window: WalkforwardWindow) -> None:
+    if payload.window_index != window.index:
+        raise TemporalIntegrityError("El payload del provider no coincide con la window solicitada")
+    for record in payload.forecasts or payload.signals:
+        validate_record_matches_window(record, window)
+
+
+def ensure_market_timestamp_exists(market_frame: MarketFrame, instrument_id: str, timestamp) -> None:
+    if market_frame.bar_for(instrument_id, timestamp) is None:
+        raise ContractValidationError(f"No existe barra para {instrument_id} en {timestamp!s}")
 
 
 def validate_snapshot_invariants(

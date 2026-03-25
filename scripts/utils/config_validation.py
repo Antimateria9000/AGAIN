@@ -88,6 +88,26 @@ def validate_config_schema(config: Dict[str, Any]) -> Dict[str, Any]:
     if fallback_ratio < 0.0 or fallback_ratio > 1.0:
         raise ValueError("La clave 'training_universe.maximum_fallback_ratio' debe estar en [0, 1]")
 
+    backtesting_runtime = dict(config.get("backtesting_runtime") or {})
+    if backtesting_runtime:
+        accelerator = str(backtesting_runtime.get("accelerator", "auto")).strip().lower()
+        if accelerator not in {"auto", "cpu", "gpu", "cuda"}:
+            raise ValueError("La clave 'backtesting_runtime.accelerator' debe ser auto, cpu o gpu")
+
+        execution_backend = str(backtesting_runtime.get("execution_backend", "gpu_full")).strip().lower()
+        if execution_backend not in {"cpu_reference", "gpu_full"}:
+            raise ValueError("La clave 'backtesting_runtime.execution_backend' debe ser cpu_reference o gpu_full")
+
+        inference_backend = str(backtesting_runtime.get("inference_backend", "gpu_batched")).strip().lower()
+        if inference_backend not in {"legacy_per_timestamp", "gpu_batched"}:
+            raise ValueError(
+                "La clave 'backtesting_runtime.inference_backend' debe ser legacy_per_timestamp o gpu_batched"
+            )
+
+        parity_check_sample_windows = int(backtesting_runtime.get("parity_check_sample_windows", 0))
+        if parity_check_sample_windows < 0:
+            raise ValueError("La clave 'backtesting_runtime.parity_check_sample_windows' no puede ser negativa")
+
     return config
 
 
@@ -124,6 +144,18 @@ def apply_runtime_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
 
     resolved.setdefault("prediction", {})
     resolved["prediction"].setdefault("future_dates_mode", "approximate_business_days")
+    resolved["prediction"].setdefault("accelerator", resolved["training"].get("accelerator", "auto"))
+    resolved["prediction"].setdefault("precision", resolved["training"].get("precision", "auto"))
+
+    resolved.setdefault("backtesting_runtime", {})
+    resolved["backtesting_runtime"].setdefault("accelerator", resolved["prediction"].get("accelerator", "auto"))
+    resolved["backtesting_runtime"].setdefault("precision", resolved["prediction"].get("precision", "auto"))
+    resolved["backtesting_runtime"].setdefault("execution_backend", "gpu_full")
+    resolved["backtesting_runtime"].setdefault("inference_backend", "gpu_batched")
+    resolved["backtesting_runtime"].setdefault("allow_cpu_fallback_live", True)
+    resolved["backtesting_runtime"].setdefault("allow_cpu_fallback_frozen", False)
+    resolved["backtesting_runtime"].setdefault("parity_check_sample_windows", 0)
+    resolved["backtesting_runtime"].setdefault("emit_runtime_trace", True)
 
     resolved.setdefault("paths", {})
     resolved["paths"].setdefault("artifacts_dir", "artifacts")

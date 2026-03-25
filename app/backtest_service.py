@@ -61,7 +61,7 @@ class BacktestService:
         return assess_model_readiness(self.config)
 
     def get_runtime_status(self):
-        return resolve_execution_context(self.config, purpose="predict").to_display_dict()
+        return resolve_execution_context(self.config, purpose="backtest").to_display_dict()
 
     def list_presets(self) -> list[dict[str, Any]]:
         presets = []
@@ -160,6 +160,9 @@ class BacktestService:
             "end_date": end_date.isoformat(),
             "methodology_note": str(mode_section.get("methodology_note") or ""),
         }
+        runtime_trace = getattr(provider, "runtime_trace", None)
+        if isinstance(runtime_trace, dict):
+            market_context["runtime_trace"] = dict(runtime_trace)
         return self.ui.persist_result(
             result,
             mode=str(mode_section.get("label") or preset_name),

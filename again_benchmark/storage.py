@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -146,7 +146,7 @@ class BenchmarkStorage:
                     definition.benchmark_id,
                     definition.benchmark_version,
                     definition.label,
-                    datetime.utcnow().replace(tzinfo=None).isoformat(),
+                    datetime.now(UTC).replace(tzinfo=None).isoformat(),
                     str(path),
                 ),
             )

@@ -133,7 +133,12 @@ def clear_hardware_status_cache():
 
 def _read_requested_runtime(config: dict, purpose: str) -> tuple[str, str]:
     training_config = config.get("training", {})
-    section = training_config if purpose == "train" else config.get("prediction", {})
+    if purpose == "train":
+        section = training_config
+    elif purpose == "backtest":
+        section = config.get("backtesting_runtime", {})
+    else:
+        section = config.get("prediction", {})
     requested_accelerator = str(section.get("accelerator", training_config.get("accelerator", "auto"))).lower()
     requested_precision = str(section.get("precision", training_config.get("precision", "auto"))).lower()
     return requested_accelerator, requested_precision
