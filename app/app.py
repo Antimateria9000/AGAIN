@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from app.backtest_service import BacktestService
-from app.config_loader import get_default_config_path, load_tickers_and_names, load_training_groups
+from app.config_loader import get_default_config_path, load_active_inference_universe, load_tickers_and_names, load_training_groups
 from app.maintenance_service import RepositoryMaintenanceService
 from app.plot_utils import build_benchmark_plot, build_stock_plot
 from app.services import BenchmarkService, ForecastService, TrainingService
@@ -18,7 +18,8 @@ from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.logging_utils import configure_logging
 from scripts.utils.model_registry import get_active_profile_path, set_active_profile_path
-from scripts.utils.training_universe import build_runtime_training_config
+from scripts.utils.repo_layout import resolve_repo_path
+from scripts.utils.training_universe import build_runtime_training_config, normalize_ticker_symbol
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -55,17 +56,288 @@ def _get_maintenance_service(base_config_path: str | None = None) -> RepositoryM
     return RepositoryMaintenanceService(_get_config_manager(base_config_path))
 
 
-def _select_ticker_input(ticker_options: dict[str, str], default_ticker: str) -> str:
-    labels = ["Escribir manualmente"] + list(ticker_options.values())
-    default_index = 0 if default_ticker not in ticker_options else list(ticker_options.values()).index(ticker_options[default_ticker]) + 1
-    ticker_option = st.selectbox(
-        "Selecciona una empresa de la lista o escribela manualmente",
-        options=labels,
-        index=default_index,
+PREDICTION_VIEW_STATE_KEY = "prediction_view_state"
+HISTORICAL_VIEW_STATE_KEY = "historical_view_state"
+INFERENCE_WIDGET_KEYS = (
+    "prediction_selected_peer",
+    "prediction_use_manual",
+    "prediction_manual_ticker",
+    "historical_selected_peer",
+    "historical_use_manual",
+    "historical_manual_ticker",
+)
+
+
+def _clear_inference_view_session_state() -> None:
+    for key in (PREDICTION_VIEW_STATE_KEY, HISTORICAL_VIEW_STATE_KEY, *INFERENCE_WIDGET_KEYS):
+        st.session_state.pop(key, None)
+
+
+def _default_inference_view_state() -> dict[str, object]:
+    return {
+        "selected_mode": "anchor",
+        "effective_ticker": None,
+        "manual_ticker": "",
+        "selected_peer": "",
+        "cache_key": None,
+        "result_payload": None,
+        "last_rendered_at": None,
+        "last_error": None,
+    }
+
+
+def _get_inference_view_state(state_key: str) -> dict[str, object]:
+    persisted = st.session_state.get(state_key)
+    base_state = _default_inference_view_state()
+    if isinstance(persisted, dict):
+        for field_name in base_state:
+            if field_name in persisted:
+                base_state[field_name] = persisted[field_name]
+    st.session_state[state_key] = base_state
+    return base_state
+
+
+def _artifact_signature(config: dict, path_value: str | None) -> tuple[str | None, int | None, int | None]:
+    if not path_value:
+        return (None, None, None)
+    resolved_path = resolve_repo_path(config, path_value)
+    if not resolved_path.exists():
+        return (str(resolved_path), None, None)
+    stat = resolved_path.stat()
+    return (str(resolved_path), stat.st_mtime_ns, stat.st_size)
+
+
+def _build_inference_cache_key(
+    config: dict,
+    *,
+    selected_config_path: str,
+    effective_ticker: str,
+    view_name: str,
+) -> tuple[object, ...]:
+    model_save_path = config.get("paths", {}).get("model_save_path")
+    model_meta_path = f"{model_save_path}.meta.json" if model_save_path else None
+    return (
+        view_name,
+        str(selected_config_path),
+        str(config.get("model_name") or ""),
+        str(effective_ticker or ""),
+        int(config.get("prediction", {}).get("years") or 0),
+        int(config.get("model", {}).get("max_prediction_length") or 0),
+        _artifact_signature(config, model_save_path),
+        _artifact_signature(config, model_meta_path),
+        _artifact_signature(config, config.get("data", {}).get("processed_data_path")),
     )
-    if ticker_option == "Escribir manualmente":
-        return st.text_input("Ticker (por ejemplo AAPL, BBVA.MC o CDR.WA)", value=default_ticker)
-    return next(ticker for ticker, name in ticker_options.items() if name == ticker_option)
+
+
+def _normalize_manual_ticker(manual_ticker: str | None) -> str | None:
+    candidate = str(manual_ticker or "").strip()
+    if not candidate:
+        return None
+    return normalize_ticker_symbol(candidate)
+
+
+def _resolve_effective_ticker(
+    *,
+    anchor_ticker: str | None,
+    selected_peer: str | None,
+    manual_ticker: str | None,
+    use_manual: bool,
+) -> str:
+    normalized_manual_ticker = _normalize_manual_ticker(manual_ticker)
+    if use_manual and normalized_manual_ticker:
+        return normalized_manual_ticker
+    if selected_peer:
+        return str(selected_peer)
+    if anchor_ticker:
+        return str(anchor_ticker)
+    raise ValueError("No se ha podido resolver un ticker efectivo para inferencia")
+
+
+def _should_render_persisted_result(view_state: dict[str, object], expected_cache_key: tuple[object, ...]) -> bool:
+    return bool(
+        view_state.get("cache_key") == expected_cache_key
+        and view_state.get("result_payload") is not None
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=None)
+def _run_cached_future_forecast(
+    cache_key: tuple[object, ...],
+    selected_config_path: str,
+    effective_ticker: str,
+    years: int,
+) -> dict[str, object]:
+    del cache_key
+    config = _get_config_manager(selected_config_path).config
+    forecast_service = _get_forecast_service(selected_config_path, years)
+    end_timestamp = datetime.now().replace(tzinfo=None)
+    start_date = pd.Timestamp(end_timestamp).tz_localize(None) - pd.Timedelta(days=years * 365)
+    ticker_data, original_close, median, lower_bound, upper_bound, details = forecast_service.predict(
+        effective_ticker,
+        start_date,
+        end_timestamp,
+    )
+    return {
+        "ticker_data": ticker_data.copy(),
+        "original_close": original_close.copy(),
+        "median": list(median),
+        "lower_bound": list(lower_bound),
+        "upper_bound": list(upper_bound),
+        "details": details,
+        "effective_ticker": effective_ticker,
+        "model_name": str(config.get("model_name") or ""),
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=None)
+def _run_cached_historical_forecast(
+    cache_key: tuple[object, ...],
+    selected_config_path: str,
+    effective_ticker: str,
+    years: int,
+) -> dict[str, object]:
+    del cache_key
+    config = _get_config_manager(selected_config_path).config
+    forecast_service = _get_forecast_service(selected_config_path, years)
+    end_timestamp = datetime.now().replace(tzinfo=None)
+    start_date = pd.Timestamp(end_timestamp).tz_localize(None) - pd.Timedelta(days=years * 365)
+    ticker_data, original_close, median, lower_bound, upper_bound, historical_close = forecast_service.predict_historical(
+        effective_ticker,
+        start_date,
+        end_timestamp,
+    )
+    return {
+        "ticker_data": ticker_data.copy(),
+        "original_close": original_close.copy(),
+        "median": list(median),
+        "lower_bound": list(lower_bound),
+        "upper_bound": list(upper_bound),
+        "historical_close": historical_close.copy(),
+        "effective_ticker": effective_ticker,
+        "model_name": str(config.get("model_name") or ""),
+    }
+
+
+def _render_prediction_payload(config: dict, payload: dict[str, object]) -> None:
+    fig, pred_df = build_stock_plot(
+        config,
+        payload["ticker_data"],
+        payload["original_close"],
+        payload["median"],
+        payload["lower_bound"],
+        payload["upper_bound"],
+        str(payload["effective_ticker"]),
+        forecast_dates=(payload.get("details") or {}).get("forecast_dates"),
+        historical_period_days=st.session_state.historical_period_days,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    if pred_df is not None:
+        st.subheader("Precios previstos")
+        st.dataframe(
+            pred_df.style.format(
+                {
+                    "Fecha": "{:%Y-%m-%d}",
+                    "Precio previsto": "{:.2f}",
+                    "Cuantil inferior (10%)": "{:.2f}",
+                    "Cuantil superior (90%)": "{:.2f}",
+                }
+            )
+        )
+
+
+def _render_historical_payload(config: dict, payload: dict[str, object]) -> None:
+    fig, _ = build_stock_plot(
+        config,
+        payload["ticker_data"],
+        payload["original_close"],
+        payload["median"],
+        payload["lower_bound"],
+        payload["upper_bound"],
+        str(payload["effective_ticker"]),
+        historical_close=payload["historical_close"],
+        historical_period_days=st.session_state.historical_period_days,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_active_inference_selector(config: dict, *, view_prefix: str, state_key: str) -> dict[str, object]:
+    universe = load_active_inference_universe(config)
+    view_state = _get_inference_view_state(state_key)
+    labels_by_ticker = dict(universe.get("all_known_tickers") or {})
+    anchor_ticker = universe.get("anchor_ticker")
+    peer_tickers = list(universe.get("peer_tickers") or [])
+
+    st.caption(f"Universo activo resuelto desde: `{universe.get('source')}`")
+    for warning in universe.get("warnings") or []:
+        st.warning(str(warning))
+
+    anchor_options = [anchor_ticker] if anchor_ticker else ["Sin ticker principal"]
+    st.selectbox(
+        "Ticker principal",
+        options=anchor_options,
+        index=0,
+        format_func=lambda ticker: labels_by_ticker.get(str(ticker), str(ticker)),
+        disabled=True,
+    )
+
+    peer_widget_key = f"{view_prefix}_selected_peer"
+    peer_options = [""] + peer_tickers if peer_tickers else [""]
+    persisted_peer = str(view_state.get("selected_peer") or "")
+    if st.session_state.get(peer_widget_key) not in peer_options:
+        st.session_state[peer_widget_key] = persisted_peer if persisted_peer in peer_options else ""
+    selected_peer = st.selectbox(
+        "Peers entrenados",
+        options=peer_options,
+        format_func=lambda ticker: (
+            "Sin peers entrenados"
+            if ticker == "" and not peer_tickers
+            else "Usar ticker principal"
+            if ticker == ""
+            else labels_by_ticker.get(str(ticker), str(ticker))
+        ),
+        disabled=not peer_tickers,
+        key=peer_widget_key,
+    )
+
+    st.markdown("### Ticker manual")
+    manual_mode_key = f"{view_prefix}_use_manual"
+    manual_ticker_key = f"{view_prefix}_manual_ticker"
+    if manual_mode_key not in st.session_state:
+        st.session_state[manual_mode_key] = bool(view_state.get("selected_mode") == "manual")
+    if manual_ticker_key not in st.session_state:
+        st.session_state[manual_ticker_key] = str(view_state.get("manual_ticker") or "")
+    use_manual = st.checkbox("Usar ticker manual", key=manual_mode_key)
+    manual_ticker = st.text_input(
+        "Ticker manual (por ejemplo BBVA.MC, AAPL o BNP.PA)",
+        key=manual_ticker_key,
+        disabled=not use_manual,
+    )
+
+    effective_ticker = None
+    selector_error = None
+    try:
+        effective_ticker = _resolve_effective_ticker(
+            anchor_ticker=str(anchor_ticker) if anchor_ticker else None,
+            selected_peer=selected_peer or None,
+            manual_ticker=manual_ticker,
+            use_manual=bool(use_manual),
+        )
+    except ValueError as exc:
+        selector_error = str(exc)
+        st.info(selector_error)
+
+    view_state["selected_mode"] = "manual" if use_manual and str(manual_ticker).strip() else "peer" if selected_peer else "anchor"
+    view_state["selected_peer"] = selected_peer or ""
+    view_state["manual_ticker"] = str(manual_ticker or "")
+    view_state["effective_ticker"] = effective_ticker
+    st.session_state[state_key] = view_state
+
+    return {
+        "universe": universe,
+        "effective_ticker": effective_ticker,
+        "view_state": view_state,
+        "selector_error": selector_error,
+    }
 
 
 def _render_model_not_ready(readiness):
@@ -76,88 +348,116 @@ def _render_model_not_ready(readiness):
     st.info("Ve a la seccion Entrenamiento y genera un modelo canonico para el universo que quieras usar.")
 
 
-def _render_prediction_view(config: dict, forecast_service: ForecastService, years: int):
+def _render_prediction_view(config: dict, selected_config_path: str, forecast_service: ForecastService, years: int):
     readiness = forecast_service.get_model_readiness()
     if not readiness.ready:
         _render_model_not_ready(readiness)
         return
 
-    ticker_options = load_tickers_and_names(config)
-    default_ticker = "AAPL" if "AAPL" in ticker_options else (list(ticker_options.keys())[0] if ticker_options else "AAPL")
-    ticker_input = _select_ticker_input(ticker_options, default_ticker)
+    selector = _render_active_inference_selector(
+        config,
+        view_prefix="prediction",
+        state_key=PREDICTION_VIEW_STATE_KEY,
+    )
+    effective_ticker = selector["effective_ticker"]
+    view_state = selector["view_state"]
+    if not effective_ticker:
+        return
 
-    if st.button("Generar prediccion"):
+    expected_cache_key = _build_inference_cache_key(
+        config,
+        selected_config_path=selected_config_path,
+        effective_ticker=str(effective_ticker),
+        view_name="future_prediction",
+    )
+    button_label = (
+        "Actualizar prediccion"
+        if _should_render_persisted_result(view_state, expected_cache_key)
+        else "Generar prediccion"
+    )
+    if st.button(button_label, key="prediction_run_button"):
         with st.spinner("Generando prediccion..."):
-            start_date = pd.Timestamp(datetime.now()).tz_localize(None) - pd.Timedelta(days=years * 365)
             try:
-                ticker_data, original_close, median, lower_bound, upper_bound, details = forecast_service.predict(
-                    ticker_input,
-                    start_date,
-                    datetime.now().replace(tzinfo=None),
+                _run_cached_future_forecast.clear()
+                payload = _run_cached_future_forecast(
+                    expected_cache_key,
+                    selected_config_path,
+                    str(effective_ticker),
+                    years,
                 )
-                fig, pred_df = build_stock_plot(
-                    config,
-                    ticker_data,
-                    original_close,
-                    median,
-                    lower_bound,
-                    upper_bound,
-                    ticker_input,
-                    forecast_dates=details.get("forecast_dates"),
-                    historical_period_days=st.session_state.historical_period_days,
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                if pred_df is not None:
-                    st.subheader("Precios previstos")
-                    st.dataframe(
-                        pred_df.style.format(
-                            {
-                                "Fecha": "{:%Y-%m-%d}",
-                                "Precio previsto": "{:.2f}",
-                                "Cuantil inferior (10%)": "{:.2f}",
-                                "Cuantil superior (90%)": "{:.2f}",
-                            }
-                        )
-                    )
+                view_state["cache_key"] = expected_cache_key
+                view_state["result_payload"] = payload
+                view_state["last_error"] = None
+                view_state["last_rendered_at"] = datetime.now().replace(microsecond=0).isoformat()
+                st.session_state[PREDICTION_VIEW_STATE_KEY] = view_state
             except Exception as exc:
-                logger.exception("Error al generar la prediccion para %s", ticker_input)
-                st.error(f"Error al generar la prediccion para {ticker_input}: {exc}")
+                logger.exception("Error al generar la prediccion para %s", effective_ticker)
+                view_state["last_error"] = str(exc)
+                st.session_state[PREDICTION_VIEW_STATE_KEY] = view_state
+                st.error(f"Error al generar la prediccion para {effective_ticker}: {exc}")
+
+    if _should_render_persisted_result(view_state, expected_cache_key):
+        if view_state.get("last_error"):
+            st.warning(f"Se muestra el ultimo resultado valido. La ultima actualizacion fallo: {view_state['last_error']}")
+        _render_prediction_payload(config, view_state["result_payload"])
+        view_state["last_rendered_at"] = datetime.now().replace(microsecond=0).isoformat()
+        st.session_state[PREDICTION_VIEW_STATE_KEY] = view_state
 
 
-def _render_historical_view(config: dict, forecast_service: ForecastService, years: int):
+def _render_historical_view(config: dict, selected_config_path: str, forecast_service: ForecastService, years: int):
     readiness = forecast_service.get_model_readiness()
     if not readiness.ready:
         _render_model_not_ready(readiness)
         return
 
-    ticker_options = load_tickers_and_names(config)
-    default_ticker = "AAPL" if "AAPL" in ticker_options else (list(ticker_options.keys())[0] if ticker_options else "AAPL")
-    ticker_input = _select_ticker_input(ticker_options, default_ticker)
+    selector = _render_active_inference_selector(
+        config,
+        view_prefix="historical",
+        state_key=HISTORICAL_VIEW_STATE_KEY,
+    )
+    effective_ticker = selector["effective_ticker"]
+    view_state = selector["view_state"]
+    if not effective_ticker:
+        return
 
-    if st.button("Comparar con historico"):
+    expected_cache_key = _build_inference_cache_key(
+        config,
+        selected_config_path=selected_config_path,
+        effective_ticker=str(effective_ticker),
+        view_name="historical_prediction",
+    )
+    button_label = (
+        "Actualizar comparacion"
+        if _should_render_persisted_result(view_state, expected_cache_key)
+        else "Comparar con historico"
+    )
+    if st.button(button_label, key="historical_run_button"):
         with st.spinner("Generando comparacion historica..."):
-            start_date = pd.Timestamp(datetime.now()).tz_localize(None) - pd.Timedelta(days=years * 365)
             try:
-                ticker_data, original_close, median, lower_bound, upper_bound, historical_close = forecast_service.predict_historical(
-                    ticker_input,
-                    start_date,
-                    datetime.now().replace(tzinfo=None),
+                _run_cached_historical_forecast.clear()
+                payload = _run_cached_historical_forecast(
+                    expected_cache_key,
+                    selected_config_path,
+                    str(effective_ticker),
+                    years,
                 )
-                fig, _ = build_stock_plot(
-                    config,
-                    ticker_data,
-                    original_close,
-                    median,
-                    lower_bound,
-                    upper_bound,
-                    ticker_input,
-                    historical_close=historical_close,
-                    historical_period_days=st.session_state.historical_period_days,
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                view_state["cache_key"] = expected_cache_key
+                view_state["result_payload"] = payload
+                view_state["last_error"] = None
+                view_state["last_rendered_at"] = datetime.now().replace(microsecond=0).isoformat()
+                st.session_state[HISTORICAL_VIEW_STATE_KEY] = view_state
             except Exception as exc:
-                logger.exception("Error al comparar con historico para %s", ticker_input)
-                st.error(f"Error al comparar con historico para {ticker_input}: {exc}")
+                logger.exception("Error al comparar con historico para %s", effective_ticker)
+                view_state["last_error"] = str(exc)
+                st.session_state[HISTORICAL_VIEW_STATE_KEY] = view_state
+                st.error(f"Error al comparar con historico para {effective_ticker}: {exc}")
+
+    if _should_render_persisted_result(view_state, expected_cache_key):
+        if view_state.get("last_error"):
+            st.warning(f"Se muestra la ultima comparacion valida. La ultima actualizacion fallo: {view_state['last_error']}")
+        _render_historical_payload(config, view_state["result_payload"])
+        view_state["last_rendered_at"] = datetime.now().replace(microsecond=0).isoformat()
+        st.session_state[HISTORICAL_VIEW_STATE_KEY] = view_state
 
 
 def _serialize_for_ui(value):
@@ -821,6 +1121,7 @@ def _render_repository_maintenance_view(
                 )
                 if result["active_profile_deleted"]:
                     st.session_state.selected_config_path = base_config_path
+                    _clear_inference_view_session_state()
                 st.cache_resource.clear()
                 st.rerun()
 
@@ -916,6 +1217,7 @@ def _render_training_view(
                 if result.profile_path:
                     set_active_profile_path(base_config, result.profile_path)
                     st.session_state.selected_config_path = str(Path(result.profile_path))
+                    _clear_inference_view_session_state()
                 st.cache_resource.clear()
                 st.rerun()
             except Exception as exc:
@@ -958,6 +1260,7 @@ def main():
             set_active_profile_path(base_config, None)
         else:
             set_active_profile_path(base_config, selected_config_path)
+        _clear_inference_view_session_state()
         st.cache_resource.clear()
         st.rerun()
 
@@ -1005,9 +1308,9 @@ def main():
             maintenance_service=maintenance_service,
         )
     elif page == "Prediccion futura":
-        _render_prediction_view(config, forecast_service, years)
+        _render_prediction_view(config, st.session_state.selected_config_path, forecast_service, years)
     elif page == "Comparacion historica":
-        _render_historical_view(config, forecast_service, years)
+        _render_historical_view(config, st.session_state.selected_config_path, forecast_service, years)
     elif page == "Benchmark":
         try:
             benchmark_service = _get_benchmark_service(st.session_state.selected_config_path, years)
