@@ -1,7 +1,7 @@
 from again_econ.config import WalkforwardConfig
 from again_econ.walkforward import build_walkforward_windows
 
-from tests.again_econ_test_utils import build_single_symbol_market
+from tests.helpers.again_econ import build_single_symbol_market
 
 
 def test_walkforward_splitter_creates_non_overlapping_test_windows():

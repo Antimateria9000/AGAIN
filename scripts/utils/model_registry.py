@@ -6,9 +6,11 @@ from typing import Any
 
 import yaml
 
+from scripts.utils.repo_layout import resolve_repo_path
+
 
 def _registry_path(config: dict) -> Path:
-    return Path(config["paths"]["model_registry_path"])
+    return resolve_repo_path(config, config["paths"]["model_registry_path"])
 
 
 def load_model_registry(config: dict) -> dict[str, Any]:
@@ -48,6 +50,12 @@ def list_model_profiles(config: dict) -> list[dict[str, Any]]:
     return profiles
 
 
+def get_model_profile(config: dict, model_name: str) -> dict[str, Any] | None:
+    registry = load_model_registry(config)
+    entry = registry.get("profiles", {}).get(str(model_name))
+    return deepcopy(entry) if entry else None
+
+
 def get_active_profile_path(config: dict) -> str | None:
     registry = load_model_registry(config)
     active_profile = registry.get("active_profile_path")
@@ -58,3 +66,12 @@ def set_active_profile_path(config: dict, profile_path: str | None) -> None:
     registry = load_model_registry(config)
     registry["active_profile_path"] = str(profile_path) if profile_path else None
     save_model_registry(config, registry)
+
+
+def remove_model_profile(config: dict, model_name: str) -> dict[str, Any] | None:
+    registry = load_model_registry(config)
+    removed = registry.get("profiles", {}).pop(str(model_name), None)
+    if removed and str(removed.get("profile_path") or "") == str(registry.get("active_profile_path") or ""):
+        registry["active_profile_path"] = None
+    save_model_registry(config, registry)
+    return removed

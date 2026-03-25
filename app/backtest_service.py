@@ -10,6 +10,7 @@ import yaml
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.model_readiness import assess_model_readiness
+from scripts.utils.repo_layout import resolve_repo_path
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -47,8 +48,12 @@ class BacktestService:
 
         self.presets_dir = Path(self.config["paths"]["config_dir"]) / "backtests"
         default_payload = self._load_yaml(self.presets_dir / self.PRESET_FILE_BY_NAME["default"])
-        storage_root_value = str((default_payload.get("storage") or {}).get("root") or "data/backtests_econ")
-        storage_root = Path(storage_root_value)
+        storage_root_value = str(
+            (default_payload.get("storage") or {}).get("root")
+            or self.config["paths"].get("backtest_storage_dir")
+            or "artifacts/backtests/econ"
+        )
+        storage_root = resolve_repo_path(self.config, storage_root_value)
         self.storage = BacktestStorage(storage_root)
         self.ui = BacktestUIAdapter(self.storage)
 
@@ -139,6 +144,17 @@ class BacktestService:
             "source_summary": dict(build_result.source_summary),
             "provenance_by_ticker": build_result.provenance_by_ticker,
             "integrity_report": build_result.integrity_report.to_dict(),
+            "quality_report": {
+                "input_rows": build_result.quality_report.input_rows,
+                "output_rows": build_result.quality_report.output_rows,
+                "repaired_rows": build_result.quality_report.repaired_rows,
+                "dropped_rows": build_result.quality_report.dropped_rows,
+                "duplicate_rows_resolved": build_result.quality_report.duplicate_rows_resolved,
+                "repaired_reason_counts": dict(build_result.quality_report.repaired_reason_counts),
+                "dropped_reason_counts": dict(build_result.quality_report.dropped_reason_counts),
+                "repaired_examples": list(build_result.quality_report.repaired_examples),
+                "dropped_examples": list(build_result.quality_report.dropped_examples),
+            },
             "warnings": list(build_result.warnings),
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),

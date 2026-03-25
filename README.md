@@ -138,12 +138,19 @@ python start_training.py --regions global --years 3
 streamlit run streamlit_app.py
 ```
 
+La seccion `Entrenamiento` incorpora un bloque de mantenimiento del repositorio para:
+
+- limpiar cache y temporales regenerables
+- listar entrenamientos catalogados
+- previsualizar rutas afectadas antes del borrado
+- eliminar entrenamientos completos con confirmacion explicita si el perfil esta activo
+
 ## Tests
 
 ### Suite completa del repositorio
 
 ```bash
-python -m pytest tests -q
+python -m pytest -q
 ```
 
 ### Smoke test del pipeline
@@ -151,7 +158,7 @@ python -m pytest tests -q
 Este test crea un dataset sintetico, entrena una ejecucion minima y valida inferencia y artefactos:
 
 ```bash
-python -m pytest tests/test_smoke_pipeline.py -q
+python -m pytest tests/integration/test_smoke_pipeline.py -q
 ```
 
 ## Configuracion
@@ -165,20 +172,35 @@ Archivos de tickers:
 - `config/tickers_with_names.yaml`
 - `config/benchmark_tickers.yaml`
 
-Artefactos relevantes:
+Artefactos y roots relevantes:
 
-- `data/raw_data_path`
-- `data/processed_data_path`
-- `data/train_processed_df_path`
-- `data/val_processed_df_path`
-- `paths/models_dir`
-- `paths/normalizers_dir`
-- `paths/logs_dir`
-- `paths/benchmark_history_db_path`
+- `paths.artifacts_dir`
+- `paths.training_artifacts_dir`
+- `paths.backtest_storage_dir`
+- `paths.cache_dir`
+- `paths.tmp_dir`
+- `paths.logs_root_dir`
+- `data.raw_data_path`
+- `data.processed_data_path`
+- `data.train_processed_df_path`
+- `data.val_processed_df_path`
+- `paths.models_dir`
+- `paths.normalizers_dir`
+- `paths.logs_dir`
+- `paths.training_catalog_path`
+- `paths.benchmark_history_db_path`
 
 ## Estructura real del repositorio
 
 ```text
+artifacts/
+  backtests/
+    econ/
+  benchmarks/
+  training/
+    <profile_id>/
+      active/
+      runs/
 app/
   app.py
   backtest_market_builder.py
@@ -207,6 +229,18 @@ config/
   benchmark_tickers.yaml
   config.yaml
   tickers_with_names.yaml
+  runtime_profiles/
+tests/
+  app/
+  again_benchmark/
+  again_econ/
+  helpers/
+  integration/
+  scripts/
+var/
+  cache/
+  logs/
+  tmp/
 scripts/
   config_manager.py
   runtime_config.py
@@ -217,23 +251,24 @@ scripts/
   train.py
   debug/
   utils/
-start_training.py
-tests/
 again_econ/
-requirements.txt
-requirements-dev.txt
-pyproject.toml
-README.md
+start_training.py
+  requirements.txt
+  requirements-dev.txt
+  pyproject.toml
+  README.md
 ```
 
 ## Politica de artefactos
 
 Los siguientes ficheros y carpetas son artefactos derivados y no fuente de verdad del repositorio:
 
+- `artifacts/`
+- `var/`
 - `data/`
 - `logs/`
 - `lightning_logs/`
-- checkpoints locales en `models/`
+- checkpoints legacy o locales en `models/`
 
 Los artefactos persistidos se validan con checksum SHA-256. Si el checksum falta o no coincide, la carga debe considerarse no fiable.
 

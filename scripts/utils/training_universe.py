@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from scripts.utils.repo_layout import apply_training_profile_layout, resolve_repo_path
+
 VALID_TICKER_PATTERN = re.compile(r"^[A-Z0-9.^=_-]+$")
 
 
@@ -75,7 +77,7 @@ def normalize_ticker_symbol(symbol: str) -> str:
 
 
 def load_training_groups(config: dict) -> dict[str, PredefinedTrainingGroup]:
-    groups_path = Path(config["paths"]["training_universes_path"])
+    groups_path = resolve_repo_path(config, config["paths"]["training_universes_path"])
     with open(groups_path, "r", encoding="utf-8") as handle:
         payload = yaml.safe_load(handle) or {}
 
@@ -182,20 +184,8 @@ def build_runtime_training_config(base_config: dict, universe: ResolvedTrainingU
     config = deepcopy(base_config)
     derived_model_name = build_training_model_name(config["model_name"], universe)
 
-    data_dir = Path(config["paths"]["data_dir"])
-    models_dir = Path(config["paths"]["models_dir"])
-    logs_dir = Path(config["paths"]["logs_dir"])
-
-    universe_data_dir = data_dir / "training_universes" / sanitize_path_component(derived_model_name)
-
     config["base_model_name"] = base_config["model_name"]
     config["model_name"] = derived_model_name
-    config["paths"]["model_save_path"] = str(models_dir / f"{derived_model_name}.pth")
-    config["paths"]["logs_dir"] = str(logs_dir / sanitize_path_component(derived_model_name))
-    config["data"]["raw_data_path"] = str(universe_data_dir / "stock_data.csv")
-    config["data"]["processed_data_path"] = str(universe_data_dir / "processed_dataset.pt")
-    config["data"]["train_processed_df_path"] = str(universe_data_dir / "train_processed_df.parquet")
-    config["data"]["val_processed_df_path"] = str(universe_data_dir / "val_processed_df.parquet")
     config["data"]["years"] = int(years)
     config["data"]["tickers"] = list(universe.tickers)
     config["prediction"]["years"] = int(years)
@@ -211,11 +201,11 @@ def build_runtime_training_config(base_config: dict, universe: ResolvedTrainingU
     })
     config["training_run"] = _build_runtime_training_metadata(universe, years)
     config["training_run"]["prediction_horizon"] = int(config["model"]["max_prediction_length"])
-    return config
+    return apply_training_profile_layout(config)
 
 
 def build_runtime_profile_path(config: dict) -> Path:
-    runtime_profiles_dir = Path(config["paths"]["runtime_profiles_dir"])
+    runtime_profiles_dir = resolve_repo_path(config, config["paths"]["runtime_profiles_dir"])
     runtime_profiles_dir.mkdir(parents=True, exist_ok=True)
     return runtime_profiles_dir / f"{config['model_name']}.yaml"
 

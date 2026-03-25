@@ -21,7 +21,7 @@ from again_econ.fingerprints import fingerprint_payload
 from again_econ.providers import SignalProvider
 from again_econ.runner import run_backtest_from_bundle, run_backtest_with_provider
 
-from tests.again_econ_test_utils import build_single_symbol_market
+from tests.helpers.again_econ import build_single_symbol_market
 
 
 def test_backtest_integration_runs_end_to_end_from_legacy_forecast_bundle(tmp_path):

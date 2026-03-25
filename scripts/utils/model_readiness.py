@@ -8,6 +8,7 @@ import torch
 
 from scripts.utils.artifact_utils import ensure_relative_to, load_trusted_torch_artifact, read_metadata, verify_checksum
 from scripts.utils.data_schema import metadata_matches_active_schema
+from scripts.utils.repo_layout import resolve_repo_path
 
 
 @dataclass
@@ -19,6 +20,20 @@ class ModelReadinessReport:
 
 def _schema_matches(config: dict, metadata: dict | None) -> bool:
     return metadata_matches_active_schema(config, metadata)
+
+
+def _resolve_dataset_base_dir(config: dict, dataset_path: Path) -> Path:
+    candidates = [
+        resolve_repo_path(config, config.get("paths", {}).get("artifacts_dir", "artifacts")),
+        resolve_repo_path(config, config["paths"]["data_dir"]),
+    ]
+    for candidate in candidates:
+        try:
+            ensure_relative_to(dataset_path, candidate)
+            return candidate
+        except ValueError:
+            continue
+    raise ValueError(f"La ruta {dataset_path} no cae dentro de roots permitidos")
 
 
 def _load_checkpoint_metadata(model_path: Path) -> dict | None:
@@ -61,12 +76,12 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
     warnings: list[str] = []
     artifacts_required = bool(config.get("artifacts", {}).get("require_hash_validation", True))
 
-    model_path = Path(config["paths"]["models_dir"]) / f"{config['model_name']}.pth"
-    normalizers_path = Path(config["paths"]["normalizers_dir"]) / f"{config['model_name']}_normalizers.pkl"
-    dataset_path = Path(config["data"]["processed_data_path"])
+    model_path = resolve_repo_path(config, config["paths"]["models_dir"]) / f"{config['model_name']}.pth"
+    normalizers_path = resolve_repo_path(config, config["paths"]["normalizers_dir"]) / f"{config['model_name']}_normalizers.pkl"
+    dataset_path = resolve_repo_path(config, config["data"]["processed_data_path"])
 
     try:
-        ensure_relative_to(model_path, Path(config["paths"]["models_dir"]))
+        ensure_relative_to(model_path, resolve_repo_path(config, config["paths"]["models_dir"]))
         if not model_path.exists():
             issues.append(f"Falta el checkpoint canonico: {model_path}")
         else:
@@ -86,7 +101,7 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
         issues.append(f"Checkpoint invalido: {model_path} ({exc})")
 
     try:
-        ensure_relative_to(normalizers_path, Path(config["paths"]["normalizers_dir"]))
+        ensure_relative_to(normalizers_path, resolve_repo_path(config, config["paths"]["normalizers_dir"]))
         if not normalizers_path.exists():
             issues.append(f"Faltan los normalizadores: {normalizers_path}")
         else:
@@ -106,7 +121,7 @@ def assess_model_readiness(config: dict) -> ModelReadinessReport:
         issues.append(f"Normalizadores invalidos: {normalizers_path} ({exc})")
 
     try:
-        ensure_relative_to(dataset_path, Path(config["paths"]["data_dir"]))
+        ensure_relative_to(dataset_path, _resolve_dataset_base_dir(config, dataset_path))
         if not dataset_path.exists():
             issues.append(f"Falta el dataset procesado de entrenamiento: {dataset_path}")
         else:

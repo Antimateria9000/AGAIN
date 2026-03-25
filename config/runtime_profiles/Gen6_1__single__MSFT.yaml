@@ -86,6 +86,16 @@ training_universe:
   label: 'Ticker unico: MSFT'
   description: ''
   notes: ''
+  minimum_group_tickers_abs: 2
+  minimum_group_coverage_ratio: 1.0
+  minimum_rows_per_ticker: 241
+  minimum_common_overlap_days: 61
+  abort_if_anchor_missing: true
+  abort_if_too_many_fallback_tickers: true
+  abort_on_cached_backfill: false
+  allow_degraded_universe: false
+  maximum_fallback_tickers: 0
+  maximum_fallback_ratio: 0.0
 prediction:
   years: 3
   batch_size: 128
@@ -103,12 +113,12 @@ data:
   - usa
   - global
   - all
-  raw_data_path: data\training_universes\Gen6_1_single_MSFT\stock_data.csv
-  processed_data_path: data\training_universes\Gen6_1_single_MSFT\processed_dataset.pt
+  raw_data_path: artifacts\training\Gen6_1_single_MSFT\active\market\stock_data.csv
+  processed_data_path: artifacts\training\Gen6_1_single_MSFT\active\dataset\processed_dataset.pt
   tickers_file: config/tickers_with_names.yaml
   benchmark_tickers_file: config/benchmark_tickers.yaml
-  train_processed_df_path: data\training_universes\Gen6_1_single_MSFT\train_processed_df.parquet
-  val_processed_df_path: data\training_universes\Gen6_1_single_MSFT\val_processed_df.parquet
+  train_processed_df_path: artifacts\training\Gen6_1_single_MSFT\active\dataset\train_processed_df.parquet
+  val_processed_df_path: artifacts\training\Gen6_1_single_MSFT\active\dataset\val_processed_df.parquet
   years: 3
   tickers:
   - MSFT
@@ -124,17 +134,41 @@ data_fetch:
   trust_env_proxies: false
   use_yfinance_sector_lookup: false
   yfinance_cache_dir: data/cache/yfinance
+  session_backend: requests
+  rate_limit_cooldown_seconds: 8.0
+  rate_limit_circuit_breaker_threshold: 2
+  rate_limit_circuit_breaker_seconds: 30.0
 paths:
   data_dir: data
-  models_dir: models
-  normalizers_dir: models/normalizers
+  models_dir: artifacts\training\Gen6_1_single_MSFT\active\checkpoints
+  normalizers_dir: artifacts\training\Gen6_1_single_MSFT\active\normalizers
   config_dir: config
   runtime_profiles_dir: config/runtime_profiles
   training_universes_path: config/training_universes.yaml
   model_registry_path: config/model_registry.yaml
-  logs_dir: logs\Gen6_1_single_MSFT
+  logs_dir: var\logs\training\Gen6_1_single_MSFT\Gen6_1_single_MSFT__20260322T165840
   benchmark_history_db_path: data/benchmarks_history.sqlite
-  model_save_path: models\Gen6_1__single__MSFT.pth
+  model_save_path: artifacts\training\Gen6_1_single_MSFT\active\checkpoints\Gen6_1__single__MSFT.pth
+  artifacts_dir: artifacts
+  training_artifacts_dir: artifacts\training
+  benchmark_storage_dir: artifacts\benchmarks
+  backtest_storage_dir: artifacts\backtests\econ
+  cache_dir: var/cache
+  tmp_dir: var/tmp
+  logs_root_dir: var/logs
+  python_cache_dir: var\cache\python
+  matplotlib_cache_dir: var\cache\matplotlib
+  pytest_tmp_dir: var\tmp\pytest
+  training_catalog_path: artifacts\training\catalog.yaml
+  optuna_dir: artifacts\training\Gen6_1_single_MSFT\runs\Gen6_1_single_MSFT__20260322T165840\optuna
+  transfer_source_models_dir: models
+  transfer_destination_normalizers_dir: models/normalizers
+  training_profile_id: Gen6_1_single_MSFT
+  training_profile_root: artifacts\training\Gen6_1_single_MSFT
+  training_active_root: artifacts\training\Gen6_1_single_MSFT\active
+  training_runs_root: artifacts\training\Gen6_1_single_MSFT\runs
+  training_logs_root_dir: var\logs\training\Gen6_1_single_MSFT
+  training_run_root: artifacts\training\Gen6_1_single_MSFT\runs\Gen6_1_single_MSFT__20260322T165840
 artifacts:
   require_hash_validation: true
 base_model_name: Gen6_1
@@ -155,3 +189,9 @@ training_run:
   label: 'Ticker unico: MSFT'
   description: ''
   notes: ''
+  run_id: Gen6_1_single_MSFT__20260322T165840
+  profile_id: Gen6_1_single_MSFT
+  profile_root: artifacts\training\Gen6_1_single_MSFT
+  active_root: artifacts\training\Gen6_1_single_MSFT\active
+  run_root: artifacts\training\Gen6_1_single_MSFT\runs\Gen6_1_single_MSFT__20260322T165840
+  logs_dir: var\logs\training\Gen6_1_single_MSFT\Gen6_1_single_MSFT__20260322T165840

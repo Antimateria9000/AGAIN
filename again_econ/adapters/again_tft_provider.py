@@ -19,6 +19,7 @@ from again_econ.contracts import (
 )
 from again_econ.fingerprints import fingerprint_payload
 from again_econ.providers import ForecastProvider
+from scripts.utils.repo_layout import resolve_repo_path
 
 
 def _read_sha256_sidecar(path: Path) -> str | None:
@@ -67,7 +68,7 @@ class AgainTFTForecastProvider(ForecastProvider):
         self._forecast_mode = str(forecast_mode)
         self._input_reference = input_reference
         self._prediction_api = prediction_api
-        self._runtime_cache: tuple[Any, dict, Any] | None = None
+        self._runtime_cache_by_ticker: dict[str, tuple[Any, dict, Any]] = {}
         self._artifact_references = artifact_references or self._build_default_artifact_references()
         self._identity = ProviderIdentity(
             name=f"again_tft_{self._provider_mode}",
@@ -193,14 +194,16 @@ class AgainTFTForecastProvider(ForecastProvider):
         )
 
     def _ensure_runtime(self, ticker: str, raw_history: pd.DataFrame) -> tuple[Any, dict, Any]:
-        if self._runtime_cache is None:
+        cached = self._runtime_cache_by_ticker.get(ticker)
+        if cached is None:
             _, dataset, normalizers, model = self._prediction_api_or_default().load_data_and_model(
                 self._again_config,
                 ticker,
                 raw_data=raw_history.copy(),
             )
-            self._runtime_cache = (dataset, normalizers, model)
-        return self._runtime_cache
+            cached = (dataset, normalizers, model)
+            self._runtime_cache_by_ticker[ticker] = cached
+        return cached
 
     def _prediction_api_or_default(self) -> AgainTFTPredictionAPI:
         if self._prediction_api is None:
@@ -222,9 +225,9 @@ class AgainTFTForecastProvider(ForecastProvider):
     def _build_default_artifact_references(self) -> tuple[ArtifactReference, ...]:
         references: list[ArtifactReference] = []
         model_name = str(self._again_config.get("model_name", ""))
-        models_dir = Path(self._again_config["paths"]["models_dir"])
-        normalizers_dir = Path(self._again_config["paths"]["normalizers_dir"])
-        dataset_path = Path(self._again_config["data"]["processed_data_path"])
+        models_dir = resolve_repo_path(self._again_config, self._again_config["paths"]["models_dir"])
+        normalizers_dir = resolve_repo_path(self._again_config, self._again_config["paths"]["normalizers_dir"])
+        dataset_path = resolve_repo_path(self._again_config, self._again_config["data"]["processed_data_path"])
         config_path = self._again_config.get("_meta", {}).get("config_path")
 
         artifacts = [

@@ -28,7 +28,7 @@ from again_econ.validation import (
     validate_record_matches_window,
     validate_signals,
 )
-from tests.again_econ_test_utils import aware_utc_datetime
+from tests.helpers.again_econ import aware_utc_datetime
 
 
 def test_validate_market_frame_rejects_duplicate_or_non_increasing_timestamps():

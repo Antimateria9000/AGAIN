@@ -86,12 +86,12 @@ validation:
 
 data:
   valid_regions: [poland, europe, usa, global, all]
-  raw_data_path: data/stock_data.csv
-  processed_data_path: data/train/processed_dataset.pt
+  raw_data_path: artifacts/training/Gen6_1/active/market/stock_data.csv
+  processed_data_path: artifacts/training/Gen6_1/active/dataset/processed_dataset.pt
   tickers_file: config/tickers_with_names.yaml
   benchmark_tickers_file: config/benchmark_tickers.yaml
-  train_processed_df_path: data/train/train_processed_df.parquet
-  val_processed_df_path: data/train/val_processed_df.parquet
+  train_processed_df_path: artifacts/training/Gen6_1/active/dataset/train_processed_df.parquet
+  val_processed_df_path: artifacts/training/Gen6_1/active/dataset/val_processed_df.parquet
 
 data_fetch:
   max_workers: 1
@@ -105,20 +105,32 @@ data_fetch:
   trust_env_proxies: false
   use_yfinance_sector_lookup: false
   session_backend: requests
-  yfinance_cache_dir: data/cache/yfinance
+  yfinance_cache_dir: var/cache/yfinance
   rate_limit_cooldown_seconds: 8.0
   rate_limit_circuit_breaker_threshold: 2
   rate_limit_circuit_breaker_seconds: 30.0
 
 paths:
   data_dir: data
-  models_dir: models
-  normalizers_dir: models/normalizers
+  artifacts_dir: artifacts
+  training_artifacts_dir: artifacts/training
+  benchmark_storage_dir: artifacts/benchmarks
+  backtest_storage_dir: artifacts/backtests/econ
+  cache_dir: var/cache
+  tmp_dir: var/tmp
+  logs_root_dir: var/logs
+  python_cache_dir: var/cache/python
+  matplotlib_cache_dir: var/cache/matplotlib
+  pytest_tmp_dir: var/tmp/pytest
+  training_catalog_path: artifacts/training/catalog.yaml
+  models_dir: artifacts/training/Gen6_1/active/checkpoints
+  normalizers_dir: artifacts/training/Gen6_1/active/normalizers
   config_dir: config
   runtime_profiles_dir: config/runtime_profiles
   training_universes_path: config/training_universes.yaml
   model_registry_path: config/model_registry.yaml
-  logs_dir: logs
+  logs_dir: var/logs/training/Gen6_1/latest
+  optuna_dir: artifacts/training/Gen6_1/active/optuna
   benchmark_history_db_path: data/benchmarks_history.sqlite
 
 artifacts:

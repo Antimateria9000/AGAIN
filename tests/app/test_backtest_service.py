@@ -6,10 +6,11 @@ from types import SimpleNamespace
 import pandas as pd
 
 from app.backtest_service import BacktestService
+from app.backtest_market_builder import MarketDataQualityReport
 from scripts.runtime_config import ConfigManager
 from scripts.utils.universe_integrity import UniverseIntegrityReport, UniverseTickerIntegrity
-from tests.again_econ_test_utils import build_single_symbol_market
-from tests.test_again_econ_backtest_ui import _build_result, _market_to_frame
+from tests.helpers.again_econ import build_single_symbol_market
+from tests.helpers.again_econ_ui import build_result, market_to_frame
 
 
 class FakeStorage:
@@ -43,7 +44,7 @@ class FakeBuilder:
             "allow_local_fallback": allow_local_fallback,
         }
         market = build_single_symbol_market([10, 10, 10, 11, 12], [10, 10, 10, 11, 12], start=datetime(2024, 1, 1))
-        frame = _market_to_frame(market)
+        frame = market_to_frame(market)
         report = UniverseIntegrityReport(
             requested_tickers=["AAA"],
             successful_tickers=["AAA"],
@@ -74,6 +75,7 @@ class FakeBuilder:
             integrity_report=report,
             source_summary={"fresh_network": 1},
             provenance_by_ticker={"AAA": {"source": "fresh_network"}},
+            quality_report=MarketDataQualityReport(input_rows=5, output_rows=5),
             warnings=(),
         )
 
@@ -95,7 +97,7 @@ def test_backtest_service_resolves_frozen_mode_and_passes_clean_contracts(monkey
     service.get_model_readiness = lambda: SimpleNamespace(ready=True, summary="ok", issues=[])
     service._market_builder_cls = FakeBuilder
     service._provider_cls = FakeProvider
-    sample_result, _ = _build_result(label="service_test", exit_index=3)
+    sample_result, _ = build_result(label="service_test", exit_index=3)
     captured = {}
 
     def fake_run(market_frame, config, provider):

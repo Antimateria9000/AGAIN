@@ -6,7 +6,7 @@ import pytest
 from again_benchmark.contracts import BenchmarkMode
 from again_benchmark.runner import BenchmarkRunner
 from again_benchmark.storage import BenchmarkStorage
-from tests.again_benchmark_test_utils import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
+from tests.helpers.again_benchmark import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
 
 
 def test_frozen_benchmark_runs_from_materialized_snapshot_and_is_rerunnable(tmp_path):
@@ -45,11 +45,13 @@ def test_runner_is_decoupled_from_app_runtime_with_fake_adapter(tmp_path):
     storage = BenchmarkStorage(build_storage_root(tmp_path))
     definition = build_definition()
     runner = BenchmarkRunner(storage, FakeBenchmarkAdapter(build_market_data(), bias=0.0))
+    modules_before = set(sys.modules)
 
     bundle = runner.run_live(definition, as_of_timestamp=pd.Timestamp("2024-01-31").to_pydatetime())
+    imported_during_run = set(sys.modules) - modules_before
 
     assert bundle.summary.metrics["RMSE"] == pytest.approx(0.0)
-    assert "streamlit" not in sys.modules
+    assert "streamlit" not in imported_during_run
 
 
 def test_golden_metrics_fixture_is_stable_for_zero_bias_predictions(tmp_path):

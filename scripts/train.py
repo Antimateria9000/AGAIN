@@ -15,6 +15,7 @@ from scripts.utils.batch_size_estimator import estimate_batch_size
 from scripts.utils.data_schema import build_artifact_metadata, metadata_matches_active_schema
 from scripts.utils.device_utils import log_runtime_context, resolve_execution_context
 from scripts.utils.lightning_compat import CSVLogger, EarlyStopping, pl
+from scripts.utils.repo_layout import resolve_repo_path
 
 logger = logging.getLogger(__name__)
 cudnn.benchmark = False
@@ -67,7 +68,7 @@ def _validate_checkpoint_metadata(config: dict, checkpoint: dict, checkpoint_pat
 
 
 def _build_checkpoint_paths(config: dict) -> tuple[Path, Path, Path]:
-    canonical_path = Path(config["paths"]["model_save_path"])
+    canonical_path = resolve_repo_path(config, config["paths"]["model_save_path"])
     stem = canonical_path.stem
     suffix = canonical_path.suffix or ".pth"
     best_path = canonical_path.with_name(f"{stem}_best{suffix}")
@@ -120,7 +121,7 @@ def objective(trial, train_dataset: TimeSeriesDataSet, val_dataset: TimeSeriesDa
     trial_config["training"]["batch_size"] = batch_size
     logger.info("Batch size estimado para trial %s: %s", trial.number, batch_size)
 
-    trial_dir = Path(trial_config["paths"]["models_dir"]) / "optuna" / trial_config["model_name"]
+    trial_dir = resolve_repo_path(trial_config, trial_config["paths"]["optuna_dir"])
     trial_dir.mkdir(parents=True, exist_ok=True)
     trainer = _create_trainer(trial_config, trial_dir / f"trial_{trial.number}.pth")
     trainer.fit(
@@ -173,7 +174,7 @@ def train_model(dataset: tuple, config: dict, use_optuna: bool = True, continue_
         logger.info("Optuna omitida; se usaran hiperparametros por defecto o de checkpoint")
 
     if continue_training and model_save_path.exists():
-        ensure_relative_to(model_save_path, Path(config["paths"]["models_dir"]))
+        ensure_relative_to(model_save_path, resolve_repo_path(config, config["paths"]["models_dir"]))
         verify_checksum(model_save_path, required=config["artifacts"]["require_hash_validation"])
         checkpoint = torch.load(model_save_path, map_location=torch.device("cpu"), weights_only=False)
         _validate_checkpoint_metadata(config, checkpoint, model_save_path)

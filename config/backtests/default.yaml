@@ -8,7 +8,7 @@ mode:
     No implica reentrenamiento walk-forward por ventana.
 
 storage:
-  root: data/backtests_econ
+  root: artifacts/backtests/econ
 
 market:
   allow_local_fallback: true

@@ -3,7 +3,7 @@ import pandas as pd
 from again_benchmark.storage import BenchmarkStorage
 from again_benchmark.ui_adapter import BenchmarkUIAdapter
 from again_benchmark.runner import BenchmarkRunner
-from tests.again_benchmark_test_utils import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
+from tests.helpers.again_benchmark import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
 
 
 def test_ui_adapter_prepares_runs_and_plot_payloads(tmp_path):

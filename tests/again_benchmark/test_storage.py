@@ -7,7 +7,7 @@ from again_benchmark.contracts import BenchmarkDefinition
 from again_benchmark.runner import BenchmarkRunner
 from again_benchmark.storage import BenchmarkStorage
 from again_benchmark.errors import BenchmarkStorageError, BenchmarkValidationError
-from tests.again_benchmark_test_utils import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
+from tests.helpers.again_benchmark import FakeBenchmarkAdapter, build_definition, build_market_data, build_storage_root
 
 
 def test_snapshot_creation_persists_parquet_manifest_and_checksum(tmp_path):

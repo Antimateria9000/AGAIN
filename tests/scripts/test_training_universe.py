@@ -299,7 +299,7 @@ class TrainingUniverseTests(unittest.TestCase):
 
         preprocessor_cls.return_value.process_data.assert_not_called()
         train_model_mock.assert_not_called()
-        canonical_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data.csv"
+        canonical_raw = self.root / "artifacts" / "training" / "Gen6_1_group_bbva_peer_banks" / "active" / "market" / "stock_data.csv"
         self.assertFalse(canonical_raw.exists())
 
     @mock.patch("start_training.train_model")
@@ -426,8 +426,8 @@ class TrainingUniverseTests(unittest.TestCase):
             predefined_group_name="bbva_peer_banks",
         )
 
-        canonical_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data.csv"
-        staging_raw = self.root / "data" / "training_universes" / "Gen6_1_group_bbva_peer_banks" / "stock_data__staging.csv"
+        canonical_raw = self.root / "artifacts" / "training" / "Gen6_1_group_bbva_peer_banks" / "active" / "market" / "stock_data.csv"
+        staging_raw = self.root / "artifacts" / "training" / "Gen6_1_group_bbva_peer_banks" / "active" / "market" / "stock_data__staging.csv"
         self.assertFalse(canonical_raw.exists())
         self.assertTrue(staging_raw.exists())
         self.assertEqual(result.downloaded_tickers, ["BBVA.MC", "SAN.MC"])

@@ -5,7 +5,7 @@ import yaml
 
 from scripts.utils.config_validation import resolve_tuning_config
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXCLUDED_PARTS = {".venv", ".git", ".codex_pycache", "__pycache__"}
 
 
@@ -13,14 +13,31 @@ def iter_repo_python_files():
     for path in ROOT.rglob("*.py"):
         if any(part in EXCLUDED_PARTS for part in path.parts):
             continue
+        if path.parent == ROOT / "tests" and (path.name.startswith("test_") or path.name.endswith("_test_utils.py")):
+            continue
         yield path
 
 
 class StaticRepoTests(unittest.TestCase):
+    def test_tests_are_grouped_by_module_without_flat_root_duplicates(self):
+        expected_dirs = ["app", "again_benchmark", "again_econ", "helpers", "integration", "scripts"]
+        for name in expected_dirs:
+            self.assertTrue((ROOT / "tests" / name).is_dir(), msg=f"Falta tests/{name}")
+        pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"tests/app"', pyproject_text)
+        self.assertIn('"tests/again_benchmark"', pyproject_text)
+        self.assertIn('"tests/again_econ"', pyproject_text)
+        self.assertIn('"tests/integration"', pyproject_text)
+        self.assertIn('"tests/scripts"', pyproject_text)
+        self.assertNotIn('testpaths = ["tests"]', pyproject_text)
+
     def test_config_contains_reproducibility_keys(self):
         config_text = (ROOT / "config" / "config.yaml").read_text(encoding="utf-8")
-        self.assertIn("train_processed_df_path: data/train/train_processed_df.parquet", config_text)
-        self.assertIn("val_processed_df_path: data/train/val_processed_df.parquet", config_text)
+        self.assertIn("artifacts_dir: artifacts", config_text)
+        self.assertIn("training_artifacts_dir: artifacts/training", config_text)
+        self.assertIn("cache_dir: var/cache", config_text)
+        self.assertIn("tmp_dir: var/tmp", config_text)
+        self.assertIn("logs_root_dir: var/logs", config_text)
         self.assertIn("tickers_file: config/tickers_with_names.yaml", config_text)
         self.assertIn("training_universes_path: config/training_universes.yaml", config_text)
         self.assertIn("model_registry_path: config/model_registry.yaml", config_text)
@@ -61,7 +78,7 @@ class StaticRepoTests(unittest.TestCase):
             ROOT / "scripts" / "debug" / "feature_importance.py",
         }
         for path in iter_repo_python_files():
-            if path == ROOT / "tests" / "test_static_repo.py":
+            if path == ROOT / "tests" / "integration" / "test_static_repo.py":
                 continue
             source = path.read_text(encoding="utf-8")
             if "logging.basicConfig(" in source:

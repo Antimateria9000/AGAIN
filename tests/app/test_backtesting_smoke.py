@@ -9,3 +9,5 @@ def test_app_exposes_backtesting_section_and_render_helper():
     assert "Backtesting" in source
     assert hasattr(app_module, "_render_backtesting_view")
     assert hasattr(app_module, "_get_backtest_service")
+    assert hasattr(app_module, "_render_repository_maintenance_view")
+    assert hasattr(app_module, "_get_maintenance_service")

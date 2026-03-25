@@ -2,7 +2,7 @@ from again_econ.config import ExecutionConfig
 from again_econ.contracts import CapitalCompetitionPolicy, ExecutionReason, OrderSide, PositionTarget, ScheduledSignal, SignalRecord
 from again_econ.execution import apply_slippage, calculate_fee, run_window_execution, schedule_signal_next_open
 
-from tests.again_econ_test_utils import build_multi_symbol_market, build_single_symbol_market
+from tests.helpers.again_econ import build_multi_symbol_market, build_single_symbol_market
 
 
 def test_schedule_signal_uses_next_open_after_close_decision():

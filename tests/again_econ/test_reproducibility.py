@@ -5,7 +5,7 @@ import json
 from again_econ.config import BacktestConfig, ExecutionConfig, WalkforwardConfig
 from again_econ.runner import run_backtest_from_bundle
 
-from tests.again_econ_test_utils import build_single_symbol_market
+from tests.helpers.again_econ import build_single_symbol_market
 
 
 def test_backtest_manifest_and_outputs_are_reproducible(tmp_path):

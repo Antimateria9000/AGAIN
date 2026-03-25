@@ -10,6 +10,7 @@ import yfinance as yf
 
 from .runtime_config import ConfigManager
 from .utils.universe_integrity import UniverseIntegrityReport, build_universe_integrity_report
+from .utils.repo_layout import resolve_repo_path
 from .utils.yfinance_provider import FetchResult, YFinanceProvider
 
 logger = logging.getLogger(__name__)
@@ -25,11 +26,11 @@ class DataFetcher:
     def __init__(self, config_manager: ConfigManager, years: int):
         self.config = config_manager.config
         self.years = years
-        self.tickers_file = Path(self.config["data"]["tickers_file"])
-        self.raw_data_path = Path(self.config["data"]["raw_data_path"])
+        self.tickers_file = resolve_repo_path(self.config, self.config["data"]["tickers_file"])
+        self.raw_data_path = resolve_repo_path(self.config, self.config["data"]["raw_data_path"])
         provider_config = self.config.get("data_fetch", {})
         cache_dir_value = provider_config.get("yfinance_cache_dir")
-        self.yfinance_cache_dir = Path(cache_dir_value) if cache_dir_value else None
+        self.yfinance_cache_dir = resolve_repo_path(self.config, cache_dir_value) if cache_dir_value else None
         self.extra_days = 50
         self.max_workers = min(8, max(1, int(provider_config.get("max_workers", 1))))
         self.enable_sector_lookup = bool(provider_config.get("use_yfinance_sector_lookup", False))

@@ -7,6 +7,7 @@ import yaml
 
 from scripts.utils.artifact_utils import ensure_relative_to, verify_checksum, write_checksum
 from scripts.utils.config_validation import apply_runtime_defaults, validate_config_schema
+from scripts.utils.repo_layout import ensure_runtime_environment, resolve_repo_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class ConfigManager:
             config = apply_runtime_defaults(config)
             config.setdefault("_meta", {})
             config["_meta"]["config_path"] = str(self.config_path)
+            ensure_runtime_environment(config)
             logger.info(f"Configuracion cargada desde {self.config_path}")
             return config
         except FileNotFoundError:
@@ -47,10 +49,10 @@ class ConfigManager:
             raise KeyError(f"No existe la clave '{key}' en la configuracion")
 
     def _normalizers_path(self, model_name: str) -> Path:
-        return Path(self.get("paths.normalizers_dir")) / f"{model_name}_normalizers.pkl"
+        return resolve_repo_path(self.config, self.get("paths.normalizers_dir")) / f"{model_name}_normalizers.pkl"
 
     def load_normalizers(self, model_name: str, required: bool = False) -> dict:
-        normalizers_path = Path(self.get("paths.normalizers_dir")) / f"{model_name}_normalizers.pkl"
+        normalizers_path = resolve_repo_path(self.config, self.get("paths.normalizers_dir")) / f"{model_name}_normalizers.pkl"
         if not normalizers_path.exists():
             self._last_normalizers_metadata = None
             if required:
@@ -58,7 +60,7 @@ class ConfigManager:
             logger.warning(f"No existe el archivo de normalizadores {normalizers_path}")
             return {}
 
-        ensure_relative_to(normalizers_path, Path(self.get("paths.normalizers_dir")))
+        ensure_relative_to(normalizers_path, resolve_repo_path(self.config, self.get("paths.normalizers_dir")))
         try:
             verify_checksum(normalizers_path, required=self.get("artifacts.require_hash_validation"))
             with open(normalizers_path, "rb") as f:

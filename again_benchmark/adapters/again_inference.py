@@ -17,6 +17,7 @@ from scripts.data_fetcher import DataFetcher
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.prediction_utils import price_path_to_step_returns
+from scripts.utils.repo_layout import repo_root_from_config, resolve_repo_path
 
 
 def _compute_sha256_if_exists(path: Path) -> str | None:
@@ -158,12 +159,12 @@ class AgainInferenceAdapter:
         )
 
     def get_model_metadata(self) -> dict[str, str | None]:
-        config_path = Path(str(self.config.get("_meta", {}).get("config_path", "config/config.yaml"))).resolve()
-        repo_root = config_path.parents[1]
+        config_path = resolve_repo_path(self.config, str(self.config.get("_meta", {}).get("config_path", "config/config.yaml")))
+        repo_root = repo_root_from_config(self.config)
         model_name = str(self.config["model_name"])
-        model_path = Path(self.config["paths"]["models_dir"]) / f"{model_name}.pth"
-        normalizers_path = Path(self.config["paths"]["normalizers_dir"]) / f"{model_name}_normalizers.pkl"
-        dataset_path = Path(self.config["data"]["processed_data_path"])
+        model_path = resolve_repo_path(self.config, self.config["paths"]["models_dir"]) / f"{model_name}.pth"
+        normalizers_path = resolve_repo_path(self.config, self.config["paths"]["normalizers_dir"]) / f"{model_name}_normalizers.pkl"
+        dataset_path = resolve_repo_path(self.config, self.config["data"]["processed_data_path"])
         return {
             "model_name": model_name,
             "profile_path": str(config_path),

@@ -11,6 +11,7 @@ import streamlit as st
 
 from app.backtest_service import BacktestService
 from app.config_loader import get_default_config_path, load_tickers_and_names, load_training_groups
+from app.maintenance_service import RepositoryMaintenanceService
 from app.plot_utils import build_benchmark_plot, build_stock_plot
 from app.services import BenchmarkService, ForecastService, TrainingService
 from scripts.runtime_config import ConfigManager
@@ -47,6 +48,11 @@ def _get_backtest_service(config_path: str | None, years: int) -> BacktestServic
 @st.cache_resource(show_spinner=False)
 def _get_training_service(base_config_path: str | None = None) -> TrainingService:
     return TrainingService(_get_config_manager(base_config_path))
+
+
+@st.cache_resource(show_spinner=False)
+def _get_maintenance_service(base_config_path: str | None = None) -> RepositoryMaintenanceService:
+    return RepositoryMaintenanceService(_get_config_manager(base_config_path))
 
 
 def _select_ticker_input(ticker_options: dict[str, str], default_ticker: str) -> str:
@@ -744,7 +750,88 @@ def _render_training_result_summary():
         st.warning(f"Tickers descartados: {', '.join(summary['discarded_tickers'])}")
 
 
-def _render_training_view(base_config: dict, training_service: TrainingService):
+def _render_repository_maintenance_view(
+    base_config: dict,
+    *,
+    base_config_path: str,
+    maintenance_service: RepositoryMaintenanceService,
+):
+    with st.expander("Mantenimiento de artefactos, cache y temporales", expanded=False):
+        cache_preview = maintenance_service.get_cache_cleanup_preview()
+        st.markdown("### Cache y temporales")
+        st.write(f"Rutas detectadas para limpieza segura: **{cache_preview['candidate_count']}**")
+        if cache_preview["candidates"]:
+            st.dataframe(pd.DataFrame({"path": cache_preview["candidates"]}))
+        else:
+            st.info("No hay cache ni temporales pendientes de limpiar.")
+        if st.button("Limpiar cache y temporales"):
+            result = maintenance_service.purge_cache_and_temp()
+            st.success(f"Se han eliminado {result['deleted_count']} rutas temporales o de cache.")
+            st.cache_resource.clear()
+            st.rerun()
+
+        st.markdown("### Catalogo de entrenamientos")
+        profiles = maintenance_service.list_training_profiles()
+        if not profiles:
+            st.info("No hay entrenamientos catalogados para mantenimiento.")
+            return
+
+        profiles_df = pd.DataFrame(profiles)
+        st.dataframe(
+            profiles_df[
+                [
+                    "model_name",
+                    "label",
+                    "run_count",
+                    "active_run_id",
+                    "last_trained_at",
+                    "is_active_profile",
+                ]
+            ]
+        )
+        options = {f"{row['label']} [{row['model_name']}]": row for row in profiles}
+        selected_label = st.selectbox("Entrenamiento a eliminar", options=list(options.keys()))
+        selected_profile = options[selected_label]
+        deletion_preview = maintenance_service.preview_training_deletion(selected_profile["model_name"])
+        st.write(f"Perfil activo: **{'Si' if deletion_preview['active_profile'] else 'No'}**")
+        if deletion_preview["active_run_id"]:
+            st.write(f"Run activo catalogado: `{deletion_preview['active_run_id']}`")
+        if deletion_preview["existing_paths"]:
+            st.write("Rutas que se eliminaran")
+            st.dataframe(pd.DataFrame({"path": deletion_preview["existing_paths"]}))
+        if deletion_preview["missing_paths"]:
+            st.caption(f"Rutas ya ausentes: {len(deletion_preview['missing_paths'])}")
+        allow_delete_active = st.checkbox(
+            "Permitir borrar tambien el entrenamiento activo si coincide",
+            value=False,
+            key="maintenance_allow_delete_active",
+        )
+        if st.button("Eliminar entrenamiento seleccionado"):
+            try:
+                result = maintenance_service.delete_training_profile(
+                    selected_profile["model_name"],
+                    allow_delete_active=allow_delete_active,
+                )
+            except Exception as exc:
+                logger.exception("Error al borrar entrenamiento")
+                st.error(f"No se pudo borrar el entrenamiento: {exc}")
+            else:
+                st.success(
+                    f"Entrenamiento eliminado: {result['model_name']} | runs eliminados: {len(result['deleted_run_ids'])}"
+                )
+                if result["active_profile_deleted"]:
+                    st.session_state.selected_config_path = base_config_path
+                st.cache_resource.clear()
+                st.rerun()
+
+
+def _render_training_view(
+    base_config: dict,
+    training_service: TrainingService,
+    *,
+    base_config_path: str,
+    maintenance_service: RepositoryMaintenanceService,
+):
     st.subheader("Configuracion de entrenamiento")
     _render_training_result_summary()
 
@@ -834,6 +921,11 @@ def _render_training_view(base_config: dict, training_service: TrainingService):
             except Exception as exc:
                 logger.exception("Error al entrenar el universo seleccionado")
                 st.error(f"Error al entrenar el universo seleccionado: {exc}")
+    _render_repository_maintenance_view(
+        base_config,
+        base_config_path=base_config_path,
+        maintenance_service=maintenance_service,
+    )
 
 
 def main():
@@ -844,6 +936,7 @@ def main():
     base_config = base_config_manager.config
     base_config_path = get_default_config_path(base_config)
     training_service = _get_training_service(base_config_path)
+    maintenance_service = _get_maintenance_service(base_config_path)
 
     profile_options, default_active_profile = _resolve_profile_options(base_config, training_service)
     option_labels = [option["label"] for option in profile_options]
@@ -905,7 +998,12 @@ def main():
     )
 
     if page == "Entrenamiento":
-        _render_training_view(base_config, training_service)
+        _render_training_view(
+            base_config,
+            training_service,
+            base_config_path=base_config_path,
+            maintenance_service=maintenance_service,
+        )
     elif page == "Prediccion futura":
         _render_prediction_view(config, forecast_service, years)
     elif page == "Comparacion historica":

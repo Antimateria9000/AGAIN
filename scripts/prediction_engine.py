@@ -28,9 +28,25 @@ from scripts.utils.prediction_utils import (
     denormalize_logged_close,
     estimate_future_business_dates,
 )
+from scripts.utils.repo_layout import resolve_repo_path
 
 logger = logging.getLogger(__name__)
 logging.getLogger(LIGHTNING_LOGGER_NAME).setLevel(logging.ERROR)
+
+
+def _resolve_dataset_base_dir(config: dict, dataset_path: Path) -> Path:
+    candidates = [
+        resolve_repo_path(config, config["paths"]["artifacts_dir"]),
+        resolve_repo_path(config, config["paths"]["data_dir"]),
+    ]
+    for candidate in candidates:
+        try:
+            ensure_relative_to(dataset_path, candidate)
+            return candidate
+        except ValueError:
+            continue
+    raise ValueError(f"La ruta de dataset {dataset_path} no cae dentro de roots permitidos")
+
 
 def _validate_schema_metadata(config: dict, metadata: dict | None, artifact_name: str):
     if metadata is None:
@@ -257,11 +273,11 @@ def load_data_and_model(
     normalizers_metadata = config_manager.get_last_normalizers_metadata()
     _validate_schema_metadata(config, normalizers_metadata, f"{model_name}_normalizers.pkl")
 
-    model_path = Path(config['paths']['models_dir']) / f"{model_name}.pth"
+    model_path = resolve_repo_path(config, config['paths']['models_dir']) / f"{model_name}.pth"
     if not model_path.exists():
         raise FileNotFoundError(f"No existe el modelo {model_path}")
 
-    ensure_relative_to(model_path, Path(config['paths']['models_dir']))
+    ensure_relative_to(model_path, resolve_repo_path(config, config['paths']['models_dir']))
     verify_checksum(model_path, required=config['artifacts']['require_hash_validation'])
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     checkpoint_metadata = checkpoint.get('metadata')
@@ -270,8 +286,8 @@ def load_data_and_model(
     if 'hidden_continuous_size' not in hyperparams:
         hyperparams['hidden_continuous_size'] = config['model']['hidden_size'] // 2
 
-    dataset_path = Path(config['data']['processed_data_path'])
-    ensure_relative_to(dataset_path, Path(config['paths']['data_dir']))
+    dataset_path = resolve_repo_path(config, config['data']['processed_data_path'])
+    ensure_relative_to(dataset_path, _resolve_dataset_base_dir(config, dataset_path))
     try:
         verify_checksum(dataset_path, required=config['artifacts']['require_hash_validation'])
         dataset_metadata = read_metadata(dataset_path)

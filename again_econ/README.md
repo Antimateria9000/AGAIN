@@ -22,6 +22,7 @@ Integracion adicional disponible en el repositorio AGAIN:
 - builder explicito de `MarketFrame` desde `DataFetcher.fetch_many_stocks_with_report(...)`
 - almacenamiento persistente de runs economicos (`storage.py`)
 - reporting y vistas estables para Streamlit (`reports.py`, `ui_adapter.py`)
+- storage por defecto bajo `artifacts/backtests/econ`
 
 ## Semantica temporal
 
@@ -106,7 +107,7 @@ Cada `WindowManifest` resume:
 
 ## Testing
 
-La suite de `tests/test_again_econ_*` cubre:
+La suite de `tests/again_econ/` cubre:
 
 - invariantes temporales
 - scheduling con `available_at`

@@ -65,6 +65,8 @@ def test_market_frame_builder_builds_market_frame_and_detects_critical_gap():
     assert result.market_frame.instruments() == ("AAA",)
     assert result.source_summary == {"fresh_network": 1}
     assert result.provenance_by_ticker["AAA"]["source"] == "fresh_network"
+    assert result.quality_report.input_rows == 2
+    assert result.quality_report.output_rows == 2
     assert any("AAA presenta un hueco temporal" in warning for warning in result.warnings)
 
 
@@ -84,3 +86,48 @@ def test_market_frame_builder_rejects_local_fallback_when_mode_forbids_it():
             datetime(2024, 1, 31),
             allow_local_fallback=False,
         )
+
+
+def test_market_frame_builder_repairs_inconsistent_ohlc_rows_without_aborting_run():
+    frame = pd.DataFrame(
+        [
+            {"Date": "2024-01-01", "Open": 10.0, "High": 9.8, "Low": 9.7, "Close": 10.2, "Volume": 1000, "Ticker": "AAA", "Sector": "Unknown"},
+            {"Date": "2024-01-02", "Open": 11.0, "High": 11.5, "Low": 10.9, "Close": 11.2, "Volume": 1000, "Ticker": "AAA", "Sector": "Unknown"},
+        ]
+    )
+    builder = MarketFrameBuilder(FakeFetcher(frame, _build_report(source="fresh_network")))
+
+    result = builder.build(
+        ["AAA"],
+        datetime(2024, 1, 1),
+        datetime(2024, 1, 31),
+        allow_local_fallback=True,
+    )
+
+    first_bar = result.market_frame.bars_for_instrument("AAA")[0]
+    assert first_bar.high == 10.2
+    assert first_bar.low == 9.7
+    assert result.quality_report.repaired_rows == 1
+    assert result.quality_report.repaired_reason_counts["high_envelope_adjusted"] == 1
+    assert any("Se repararon 1 filas" in warning for warning in result.warnings)
+
+
+def test_market_frame_builder_discards_non_positive_rows_and_keeps_valid_market():
+    frame = pd.DataFrame(
+        [
+            {"Date": "2024-01-01", "Open": 0.0, "High": 1.0, "Low": 0.0, "Close": 0.5, "Volume": 1000, "Ticker": "AAA", "Sector": "Unknown"},
+            {"Date": "2024-01-02", "Open": 11.0, "High": 11.5, "Low": 10.5, "Close": 11.2, "Volume": 1000, "Ticker": "AAA", "Sector": "Unknown"},
+        ]
+    )
+    builder = MarketFrameBuilder(FakeFetcher(frame, _build_report(source="fresh_network")))
+
+    result = builder.build(
+        ["AAA"],
+        datetime(2024, 1, 1),
+        datetime(2024, 1, 31),
+        allow_local_fallback=True,
+    )
+
+    assert len(result.market_frame.bars) == 1
+    assert result.quality_report.dropped_rows == 1
+    assert result.quality_report.dropped_reason_counts["non_positive_ohlc"] == 1

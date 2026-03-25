@@ -116,12 +116,12 @@ data:
   - usa
   - global
   - all
-  raw_data_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data.csv
-  processed_data_path: data\training_universes\Gen6_1_group_bbva_peer_banks\processed_dataset.pt
+  raw_data_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\market\stock_data.csv
+  processed_data_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\dataset\processed_dataset.pt
   tickers_file: config/tickers_with_names.yaml
   benchmark_tickers_file: config/benchmark_tickers.yaml
-  train_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\train_processed_df.parquet
-  val_processed_df_path: data\training_universes\Gen6_1_group_bbva_peer_banks\val_processed_df.parquet
+  train_processed_df_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\dataset\train_processed_df.parquet
+  val_processed_df_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\dataset\val_processed_df.parquet
   years: 5
   tickers:
   - BBVA.MC
@@ -152,15 +152,35 @@ data_fetch:
   rate_limit_circuit_breaker_seconds: 30.0
 paths:
   data_dir: data
-  models_dir: models
-  normalizers_dir: models/normalizers
+  models_dir: artifacts\training\Gen6_1_group_bbva_peer_banks\active\checkpoints
+  normalizers_dir: artifacts\training\Gen6_1_group_bbva_peer_banks\active\normalizers
   config_dir: config
   runtime_profiles_dir: config/runtime_profiles
   training_universes_path: config/training_universes.yaml
   model_registry_path: config/model_registry.yaml
-  logs_dir: logs\Gen6_1_group_bbva_peer_banks
+  logs_dir: var\logs\training\Gen6_1_group_bbva_peer_banks\Gen6_1_group_bbva_peer_banks__20260322T231634
   benchmark_history_db_path: data/benchmarks_history.sqlite
-  model_save_path: models\Gen6_1__group__bbva_peer_banks.pth
+  model_save_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\checkpoints\Gen6_1__group__bbva_peer_banks.pth
+  artifacts_dir: artifacts
+  training_artifacts_dir: artifacts\training
+  benchmark_storage_dir: artifacts\benchmarks
+  backtest_storage_dir: artifacts\backtests\econ
+  cache_dir: var/cache
+  tmp_dir: var/tmp
+  logs_root_dir: var/logs
+  python_cache_dir: var\cache\python
+  matplotlib_cache_dir: var\cache\matplotlib
+  pytest_tmp_dir: var\tmp\pytest
+  training_catalog_path: artifacts\training\catalog.yaml
+  optuna_dir: artifacts\training\Gen6_1_group_bbva_peer_banks\runs\Gen6_1_group_bbva_peer_banks__20260322T231634\optuna
+  transfer_source_models_dir: models
+  transfer_destination_normalizers_dir: models/normalizers
+  training_profile_id: Gen6_1_group_bbva_peer_banks
+  training_profile_root: artifacts\training\Gen6_1_group_bbva_peer_banks
+  training_active_root: artifacts\training\Gen6_1_group_bbva_peer_banks\active
+  training_runs_root: artifacts\training\Gen6_1_group_bbva_peer_banks\runs
+  training_logs_root_dir: var\logs\training\Gen6_1_group_bbva_peer_banks
+  training_run_root: artifacts\training\Gen6_1_group_bbva_peer_banks\runs\Gen6_1_group_bbva_peer_banks__20260322T231634
 artifacts:
   require_hash_validation: true
 base_model_name: Gen6_1
@@ -1078,8 +1098,8 @@ training_run:
     degraded: false
     summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10 | fallback=0
       | discarded=0 | coverage=100.00% | overlap=1215
-  universe_integrity_report_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data__integrity_report.json
-  raw_data_staging_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data__staging.csv
+  universe_integrity_report_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\market\stock_data__integrity_report.json
+  raw_data_staging_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\market\stock_data__staging.csv
   raw_data_promoted: true
   trained_at: '2026-03-22T23:16:34'
   years: 5
@@ -1092,4 +1112,10 @@ training_run:
   integrity_decision: CONTINUE_CLEAN
   integrity_summary: decision=CONTINUE_CLEAN | requested=10 | usable=10 | fresh=10
     | fallback=0 | discarded=0 | coverage=100.00% | overlap=1270
-  raw_data_artifact_path: data\training_universes\Gen6_1_group_bbva_peer_banks\stock_data.csv
+  raw_data_artifact_path: artifacts\training\Gen6_1_group_bbva_peer_banks\active\market\stock_data.csv
+  run_id: Gen6_1_group_bbva_peer_banks__20260322T231634
+  profile_id: Gen6_1_group_bbva_peer_banks
+  profile_root: artifacts\training\Gen6_1_group_bbva_peer_banks
+  active_root: artifacts\training\Gen6_1_group_bbva_peer_banks\active
+  run_root: artifacts\training\Gen6_1_group_bbva_peer_banks\runs\Gen6_1_group_bbva_peer_banks__20260322T231634
+  logs_dir: var\logs\training\Gen6_1_group_bbva_peer_banks\Gen6_1_group_bbva_peer_banks__20260322T231634

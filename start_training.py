@@ -5,6 +5,7 @@ import logging
 import random
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ from scripts.utils.device_utils import log_runtime_context, resolve_execution_co
 from scripts.utils.lightning_compat import seed_everything
 from scripts.utils.logging_utils import configure_logging
 from scripts.utils.model_registry import register_model_profile
+from scripts.utils.repo_layout import apply_training_profile_layout, build_training_run_id, resolve_repo_path, serialize_repo_path
+from scripts.utils.training_catalog import register_training_run, snapshot_training_run_artifacts
+from scripts.utils.training_storage import build_training_profile_entry, mirror_training_logs
 from scripts.utils.training_universe import (
     build_runtime_training_config,
     resolve_training_universe,
@@ -37,6 +41,7 @@ logger = logging.getLogger(__name__)
 class TrainingExecutionResult:
     model: Any
     model_name: str
+    run_id: str | None
     profile_path: str | None
     universe_mode: str
     single_ticker_symbol: str | None
@@ -51,20 +56,33 @@ class TrainingExecutionResult:
 
 def create_directories(config: dict):
     candidate_paths = [
-        Path(config["paths"]["data_dir"]),
-        Path(config["paths"]["models_dir"]),
-        Path(config["paths"]["normalizers_dir"]),
-        Path(config["paths"]["config_dir"]),
-        Path(config["paths"]["logs_dir"]),
-        Path(config["paths"]["runtime_profiles_dir"]),
-        Path(config["paths"]["model_registry_path"]).parent,
-        Path(config["paths"]["training_universes_path"]).parent,
-        Path(config["paths"]["benchmark_history_db_path"]).parent,
-        Path(config["data"]["raw_data_path"]).parent,
-        Path(config["data"]["processed_data_path"]).parent,
-        Path(config["data"]["train_processed_df_path"]).parent,
-        Path(config["data"]["val_processed_df_path"]).parent,
+        resolve_repo_path(config, config["paths"]["data_dir"]),
+        resolve_repo_path(config, config["paths"]["artifacts_dir"]),
+        resolve_repo_path(config, config["paths"]["training_artifacts_dir"]),
+        resolve_repo_path(config, config["paths"]["cache_dir"]),
+        resolve_repo_path(config, config["paths"]["tmp_dir"]),
+        resolve_repo_path(config, config["paths"]["logs_root_dir"]),
+        resolve_repo_path(config, config["paths"]["models_dir"]),
+        resolve_repo_path(config, config["paths"]["normalizers_dir"]),
+        resolve_repo_path(config, config["paths"]["config_dir"]),
+        resolve_repo_path(config, config["paths"]["logs_dir"]),
+        resolve_repo_path(config, config["paths"]["optuna_dir"]),
+        resolve_repo_path(config, config["paths"]["runtime_profiles_dir"]),
+        resolve_repo_path(config, config["paths"]["model_registry_path"]).parent,
+        resolve_repo_path(config, config["paths"]["training_universes_path"]).parent,
+        resolve_repo_path(config, config["paths"]["training_catalog_path"]).parent,
+        resolve_repo_path(config, config["paths"]["benchmark_history_db_path"]).parent,
+        resolve_repo_path(config, config["paths"]["benchmark_storage_dir"]),
+        resolve_repo_path(config, config["paths"]["backtest_storage_dir"]),
+        resolve_repo_path(config, config["data"]["raw_data_path"]).parent,
+        resolve_repo_path(config, config["data"]["processed_data_path"]).parent,
+        resolve_repo_path(config, config["data"]["train_processed_df_path"]).parent,
+        resolve_repo_path(config, config["data"]["val_processed_df_path"]).parent,
     ]
+    if config["paths"].get("training_profile_root"):
+        candidate_paths.append(resolve_repo_path(config, config["paths"]["training_profile_root"]))
+    if config["paths"].get("training_run_root"):
+        candidate_paths.append(resolve_repo_path(config, config["paths"]["training_run_root"]))
     for directory in dict.fromkeys(path for path in candidate_paths if str(path) not in {"", "."}):
         directory.mkdir(parents=True, exist_ok=True)
         logger.info("Directorio preparado: %s", directory)
@@ -117,12 +135,12 @@ def _persist_runtime_profile(config: dict) -> Path:
 
 
 def _build_universe_report_path(config: dict) -> Path:
-    raw_data_path = Path(config["data"]["raw_data_path"])
+    raw_data_path = resolve_repo_path(config, config["data"]["raw_data_path"])
     return raw_data_path.with_name(f"{raw_data_path.stem}__integrity_report.json")
 
 
 def _build_staged_raw_data_path(config: dict) -> Path:
-    raw_data_path = Path(config["data"]["raw_data_path"])
+    raw_data_path = resolve_repo_path(config, config["data"]["raw_data_path"])
     return raw_data_path.with_name(f"{raw_data_path.stem}__staging{raw_data_path.suffix}")
 
 
@@ -133,12 +151,12 @@ def _persist_universe_snapshot(config: dict, df, report) -> None:
     payload = report.to_dict()
     payload["saved_at"] = training_run.get("trained_at")
     write_json_artifact(report_path, payload)
-    training_run["universe_integrity_report_path"] = str(report_path)
+    training_run["universe_integrity_report_path"] = serialize_repo_path(config, report_path)
 
     if df is not None and not df.empty:
         staged_raw_data_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(staged_raw_data_path, index=False)
-        training_run["raw_data_staging_path"] = str(staged_raw_data_path)
+        training_run["raw_data_staging_path"] = serialize_repo_path(config, staged_raw_data_path)
         logger.info("Snapshot bruto del universo guardado en %s", staged_raw_data_path)
 
         if report.can_promote_canonical:
@@ -177,27 +195,20 @@ def _record_universe_report(config: dict, report, *, stage: str) -> None:
 
 
 def _register_training_result(config: dict, profile_path: Path | None) -> None:
-    training_run = dict(config.get("training_run") or {})
-    profile_entry = {
-        "model_name": config["model_name"],
-        "base_model_name": config.get("base_model_name", config["model_name"]),
-        "profile_path": str(profile_path) if profile_path else str(config.get("_meta", {}).get("config_path", "")),
-        "label": training_run.get("label") or config["model_name"],
-        "description": training_run.get("description", ""),
-        "notes": training_run.get("notes", ""),
-        "universe_mode": training_run.get("mode", "legacy_regions"),
-        "single_ticker_symbol": training_run.get("single_ticker_symbol"),
-        "predefined_group_name": training_run.get("predefined_group_name"),
-        "requested_tickers": list(training_run.get("requested_tickers", [])),
-        "downloaded_tickers": list(training_run.get("downloaded_tickers", [])),
-        "discarded_tickers": list(training_run.get("discarded_tickers", [])),
-        "final_tickers_used": list(training_run.get("final_tickers_used", [])),
-        "created_at": training_run.get("trained_at"),
-        "last_trained_at": training_run.get("trained_at"),
-        "prediction_horizon": training_run.get("prediction_horizon"),
-        "years": training_run.get("years"),
-    }
+    resolved_profile_path = profile_path or Path(config.get("_meta", {}).get("config_path", ""))
+    profile_entry = build_training_profile_entry(config, resolved_profile_path)
     register_model_profile(config, profile_entry, set_active=True)
+
+
+def _prepare_training_run(config: dict) -> str:
+    training_run = dict(config.get("training_run") or {})
+    trained_at = datetime.now().replace(microsecond=0).isoformat()
+    training_run["trained_at"] = trained_at
+    run_id = build_training_run_id(config["model_name"], trained_at)
+    training_run["run_id"] = run_id
+    config["training_run"] = training_run
+    apply_training_profile_layout(config, run_id=run_id)
+    return run_id
 
 
 def _resolve_training_config(
@@ -226,6 +237,7 @@ def _resolve_training_config(
         return manager, manager.config, profile_path
 
     config = base_config
+    apply_training_profile_layout(config)
     config["data"]["years"] = years
     config["data"]["tickers"] = _select_legacy_tickers(config, regions, ticker_percentage)
     config["training_run"] = {
@@ -251,6 +263,10 @@ def _resolve_training_config(
         "notes": "",
         "single_ticker_symbol": None,
         "predefined_group_name": None,
+        "run_id": None,
+        "profile_id": config["paths"].get("training_profile_id"),
+        "profile_root": config["paths"].get("training_profile_root"),
+        "active_root": config["paths"].get("training_active_root"),
     }
     create_directories(config)
     return base_manager, config, None
@@ -304,6 +320,10 @@ def start_training(
         single_ticker_symbol=single_ticker_symbol,
         predefined_group_name=predefined_group_name,
     )
+    run_id = _prepare_training_run(config)
+    create_directories(config)
+    if profile_path is not None:
+        profile_path = _persist_runtime_profile(config)
     set_global_seed(int(config["training"]["seed"]))
     training_runtime = resolve_execution_context(config, purpose="train")
     log_runtime_context(logger, "Inicio del entrenamiento", training_runtime)
@@ -317,7 +337,8 @@ def start_training(
 
     logger.info("Preprocesando datos...")
     model_name = config["model_name"]
-    normalizers_path = Path(config["paths"]["normalizers_dir"]) / f"{model_name}_normalizers.pkl"
+    normalizers_base_dir = config["paths"].get("transfer_destination_normalizers_dir") or config["paths"]["normalizers_dir"]
+    normalizers_path = resolve_repo_path(config, normalizers_base_dir) / f"{model_name}_normalizers.pkl"
 
     preprocessor = DataPreprocessor(config)
     dataset = preprocessor.process_data(mode="train", df=df)
@@ -330,7 +351,8 @@ def start_training(
     if use_transfer_learning and not continue_training:
         if not old_model_filename:
             raise ValueError("Falta old_model_filename para transfer learning")
-        old_checkpoint_path = Path(config["paths"]["models_dir"]) / old_model_filename
+        source_models_dir = config["paths"].get("transfer_source_models_dir") or config["paths"]["models_dir"]
+        old_checkpoint_path = resolve_repo_path(config, source_models_dir) / old_model_filename
         if not old_checkpoint_path.exists():
             raise FileNotFoundError(f"No existe el checkpoint {old_checkpoint_path}")
         logger.info("Construyendo modelo para transfer learning...")
@@ -346,16 +368,21 @@ def start_training(
 
     logger.info("Entrenando modelo...")
     final_model = train_model(dataset, config, use_optuna=use_optuna, continue_training=continue_training, new_lr=new_lr)
+    mirror_training_logs(config)
 
+    run_manifest = None
     if profile_path is not None:
-        _persist_runtime_profile(config)
+        profile_path = _persist_runtime_profile(config)
+        run_manifest = snapshot_training_run_artifacts(config, profile_path=str(profile_path))
+        register_training_run(config, run_manifest, active_profile_path=str(profile_path))
         _register_training_result(config, profile_path)
 
     logger.info("Entrenamiento finalizado. La aplicacion se lanza con `streamlit run streamlit_app.py`.")
     return TrainingExecutionResult(
         model=final_model,
         model_name=config["model_name"],
-        profile_path=str(profile_path) if profile_path else None,
+        run_id=run_id,
+        profile_path=serialize_repo_path(config, profile_path) if profile_path else None,
         universe_mode=str(config.get("training_run", {}).get("mode", "legacy_regions")),
         single_ticker_symbol=config.get("training_run", {}).get("single_ticker_symbol"),
         predefined_group_name=config.get("training_run", {}).get("predefined_group_name"),

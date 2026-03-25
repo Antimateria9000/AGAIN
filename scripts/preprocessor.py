@@ -24,6 +24,7 @@ from scripts.utils.data_schema import (
     normalize_feature_list,
 )
 from scripts.utils.feature_engineer import FeatureEngineer
+from scripts.utils.repo_layout import resolve_repo_path
 from scripts.utils.universe_integrity import build_universe_integrity_report
 
 logger = logging.getLogger(__name__)
@@ -36,9 +37,9 @@ class DataPreprocessor:
         self.config_manager = ConfigManager(config.get("_meta", {}).get("config_path"))
         self.day_of_week_categories = list(DAY_OF_WEEK_CATEGORIES)
         self.month_categories = list(MONTH_CATEGORIES)
-        self.train_processed_df_path = Path(config["data"]["train_processed_df_path"])
-        self.val_processed_df_path = Path(config["data"]["val_processed_df_path"])
-        self.processed_data_path = Path(config["data"]["processed_data_path"])
+        self.train_processed_df_path = resolve_repo_path(config, config["data"]["train_processed_df_path"])
+        self.val_processed_df_path = resolve_repo_path(config, config["data"]["val_processed_df_path"])
+        self.processed_data_path = resolve_repo_path(config, config["data"]["processed_data_path"])
         self.gap_days = 10
 
     def _split_with_gap(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -232,7 +233,7 @@ class DataPreprocessor:
             self._revalidate_training_universe(train_df, val_df)
             valid_numeric_features = [feature for feature in numeric_features if feature in train_df.columns]
             expected_metadata = self._build_normalizer_metadata(valid_numeric_features)
-            normalizers_path = Path(self.config_manager.get("paths.normalizers_dir")) / f"{self.model_name}_normalizers.pkl"
+            normalizers_path = resolve_repo_path(self.config, self.config_manager.get("paths.normalizers_dir")) / f"{self.model_name}_normalizers.pkl"
             existing_normalizers = {}
             existing_metadata = None
 

@@ -17,13 +17,14 @@ from scripts.prediction_engine import generate_predictions, load_data_and_model,
 from scripts.runtime_config import ConfigManager
 from scripts.utils.device_utils import resolve_execution_context
 from scripts.utils.prediction_utils import compute_directional_accuracy, price_path_to_step_returns
+from scripts.utils.repo_layout import resolve_repo_path
 
 logger = logging.getLogger(__name__)
 METRICS = ["MAPE", "MAE", "RMSE", "DirAcc"]
 
 
 def _db_path(config: dict) -> Path:
-    return Path(config["paths"]["benchmark_history_db_path"])
+    return resolve_repo_path(config, config["paths"]["benchmark_history_db_path"])
 
 
 def _serialize_results(all_results: dict) -> str:

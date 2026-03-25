@@ -21,6 +21,10 @@ profiles:
     last_trained_at: '2026-03-22T17:51:49'
     prediction_horizon: 60
     years: 3
+    active_run_id: Gen6_1_single_BBVA_MC__20260322T175149
+    profile_root: artifacts\training\Gen6_1_single_BBVA_MC
+    active_root: artifacts\training\Gen6_1_single_BBVA_MC\active
+    logs_root: var\logs\training\Gen6_1_single_BBVA_MC
   Gen6_1__group__bbva_peer_banks:
     model_name: Gen6_1__group__bbva_peer_banks
     base_model_name: Gen6_1
@@ -71,3 +75,53 @@ profiles:
     last_trained_at: '2026-03-22T23:16:34'
     prediction_horizon: 60
     years: 5
+    active_run_id: Gen6_1_group_bbva_peer_banks__20260322T231634
+    profile_root: artifacts\training\Gen6_1_group_bbva_peer_banks
+    active_root: artifacts\training\Gen6_1_group_bbva_peer_banks\active
+    logs_root: var\logs\training\Gen6_1_group_bbva_peer_banks
+  Gen6_1__single__MSFT:
+    model_name: Gen6_1__single__MSFT
+    base_model_name: Gen6_1
+    profile_path: config\runtime_profiles\Gen6_1__single__MSFT.yaml
+    label: 'Ticker unico: MSFT'
+    description: ''
+    notes: ''
+    universe_mode: single_ticker
+    single_ticker_symbol: MSFT
+    predefined_group_name: null
+    requested_tickers:
+    - MSFT
+    downloaded_tickers: []
+    discarded_tickers: []
+    final_tickers_used: []
+    created_at: '2026-03-22T16:58:40'
+    last_trained_at: '2026-03-22T16:58:40'
+    prediction_horizon: 60
+    years: 3
+    active_run_id: Gen6_1_single_MSFT__20260322T165840
+    profile_root: artifacts\training\Gen6_1_single_MSFT
+    active_root: artifacts\training\Gen6_1_single_MSFT\active
+    logs_root: var\logs\training\Gen6_1_single_MSFT
+  Gen6_1__single__TSLA:
+    model_name: Gen6_1__single__TSLA
+    base_model_name: Gen6_1
+    profile_path: config\runtime_profiles\Gen6_1__single__TSLA.yaml
+    label: 'Ticker unico: TSLA'
+    description: ''
+    notes: ''
+    universe_mode: single_ticker
+    single_ticker_symbol: TSLA
+    predefined_group_name: null
+    requested_tickers:
+    - TSLA
+    downloaded_tickers: []
+    discarded_tickers: []
+    final_tickers_used: []
+    created_at: '2026-03-22T16:59:03'
+    last_trained_at: '2026-03-22T16:59:03'
+    prediction_horizon: 60
+    years: 3
+    active_run_id: Gen6_1_single_TSLA__20260322T165903
+    profile_root: artifacts\training\Gen6_1_single_TSLA
+    active_root: artifacts\training\Gen6_1_single_TSLA\active
+    logs_root: var\logs\training\Gen6_1_single_TSLA

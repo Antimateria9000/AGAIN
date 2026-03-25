@@ -24,6 +24,14 @@ app = ["*.py"]
 scripts = ["*.py"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+  "tests/app",
+  "tests/again_benchmark",
+  "tests/again_econ",
+  "tests/integration",
+  "tests/scripts",
+]
 python_files = ["test_*.py"]
+addopts = "-p no:cacheprovider"
+norecursedirs = [".venv", "var", "artifacts"]
 
